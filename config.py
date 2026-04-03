@@ -24,6 +24,9 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 # api.slack.com > 앱 선택 > Basic Information > Signing Secret
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 
+# api.slack.com > 앱 선택 > Basic Information > App-Level Tokens (xapp-...)
+SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
+
 # ── 노션 ──────────────────────────────────────────────────────
 # notion.so > Settings > Integrations > 새 integration 생성 후 발급
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
@@ -51,6 +54,7 @@ def validate_config():
     """앱 시작 시 필수 환경변수가 모두 있는지 확인합니다."""
     required = {
         "SLACK_BOT_TOKEN": SLACK_BOT_TOKEN,
+        "SLACK_APP_TOKEN": SLACK_APP_TOKEN,
         "SLACK_SIGNING_SECRET": SLACK_SIGNING_SECRET,
         "NOTION_TOKEN": NOTION_TOKEN,
         "NOTION_TASK_DB_ID": NOTION_TASK_DB_ID,

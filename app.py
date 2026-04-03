@@ -8,11 +8,11 @@ app.py — 나래봇 메인 진입점
 
 import os
 import logging
-from slack_bolt import App
-from slack_bolt.adapter.flask import SlackRequestHandler
-from flask import Flask, request
+from slack_bolt.adapter.socket_mode import SocketModeHandler
+from flask import Flask
+import threading
 
-from config import validate_config, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+from config import validate_config, SLACK_BOT_TOKEN, SLACK_APP_TOKEN
 from handlers.command import register_commands
 from handlers.action import register_actions
 from handlers.modal import register_modals
@@ -39,10 +39,7 @@ if log_db_id:
     logging.info(f"일지 DB 연결: {log_db_id}")
 
 # ── 슬랙 앱 초기화 ────────────────────────────────────────────
-bolt_app = App(
-    token=SLACK_BOT_TOKEN,
-    signing_secret=SLACK_SIGNING_SECRET,
-)
+bolt_app = App(token=SLACK_BOT_TOKEN)
 
 # ── 핸들러 등록 ───────────────────────────────────────────────
 register_commands(bolt_app)
@@ -54,21 +51,24 @@ register_messages(bolt_app)
 # ── 스케줄러 시작 ──────────────────────────────────────────────
 start_scheduler(bolt_app.client)
 
-# ── Flask 서버 (Railway 배포용) ───────────────────────────────
+# ── Flask 서버 (Railway 헬스체크용) ───────────────────────────
 flask_app = Flask(__name__)
-handler = SlackRequestHandler(bolt_app)
-
-@flask_app.route("/slack/events", methods=["POST"])
-def slack_events():
-    return handler.handle(request)
 
 @flask_app.route("/health", methods=["GET"])
 def health():
-    """Railway 헬스체크 엔드포인트."""
-    return {"status": "ok", "service": "나래봇"}, 200
+    return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 3000))
+    flask_app.run(host="0.0.0.0", port=port, debug=False)
 
 # ── 실행 ──────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    logging.info(f"나래봇 시작 (port={port})")
-    flask_app.run(host="0.0.0.0", port=port, debug=False)
+    logging.info("나래봇 소켓 모드 기동 중...")
+    
+    # 1. 헬스체크 서버를 별도 스레드에서 실행
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # 2. 소켓 모드 핸들러 시작
+    handler = SocketModeHandler(bolt_app, SLACK_APP_TOKEN)
+    handler.start()
