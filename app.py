@@ -8,6 +8,7 @@ app.py — 나래봇 메인 진입점
 
 import os
 import logging
+from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from flask import Flask
 import threading
