@@ -1,215 +1,87 @@
-"""
-handlers/action.py ??Task ? íƒ, ê²€?? ?¸ìˆ˜?¸ê³„ ì²˜ë¦¬
-"""
-
-import json
-import time
-
-from services.notion import (
-    get_all_tasks,
-    search_tasks,
-    get_handover_data,
-    notion_client,
-    _parse_task,
-)
-from services.slack import (
-    build_log_step_modal,
-    build_task_select_modal,
-    build_handover_message,
-    build_error_message,
-)
-
+# -*- coding: utf-8 -*-
+import json, time
+from services.notion import get_all_tasks, search_tasks, get_handover_data, notion_client, _parse_task, get_my_tasks
+from services.slack import build_log_step_modal, build_task_select_modal, build_handover_message, build_error_message
 
 def register_actions(app):
 
     @app.action("open_ilji_modal")
     def handle_open_ilji_modal(ack, body, client, logger):
-        """?¼ì? ?‘ì„± ë²„íŠ¼ ?´ë¦­ ??Task ? íƒ ëª¨ë‹¬ ?¤í”ˆ."""
         ack()
-
         try:
-            # ë¡œë”© ëª¨ë‹¬??ë¨¼ì? ?´ì–´ trigger_id ë§Œë£Œ ë°©ì?
-            loading_view = {
-                "type": "modal",
-                "title": {"type": "plain_text", "text": "?“ ?…ë¬´?¼ì? ?‘ì„±"},
-                "close": {"type": "plain_text", "text": "ì·¨ì†Œ"},
-                "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "??Task ëª©ë¡??ë¶ˆëŸ¬?¤ëŠ” ì¤?.."}}],
-            }
-            resp = client.views_open(
-                trigger_id=body["trigger_id"],
-                view=loading_view,
-            )
-            view_id = resp["view"]["id"]
-
-            # ?€?€ ?¬ìš©???¤ëª… ê¸°ë°˜ ???…ë¬´ ?°ì„  ì¡°íšŒ ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
-            user_id = body.get("user", {}).get("id")
+            lv = {"type":"modal","title":{"type":"plain_text","text":"ì—…ë¬´ì¼ì§€ ì‘ì„±"},"close":{"type":"plain_text","text":"ì·¨ì†Œ"},"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"ë¡œë”©ì¤‘..."}}]}
+            resp = client.views_open(trigger_id=body["trigger_id"],view=lv)
+            vid = resp["view"]["id"]
+            uid = body.get("user",{}).get("id")
             try:
-                user_info = client.users_info(user=user_id)
-                real_name = user_info["user"]["profile"].get("real_name", "")
-            except Exception:
-                real_name = ""
-
-            from services.notion import get_all_tasks, get_my_tasks
-            
-            if real_name:
-                tasks = get_my_tasks(real_name)
-                # ???…ë¬´ê°€ ?ìœ¼ë©??„ì²´ ?¸ë? ì¤??¼ë? ì¶©ì› (ìµœë? 9ê°?
+                ui = client.users_info(user=uid)
+                rn = ui["user"]["profile"].get("real_name","")
+            except:
+                rn = ""
+            if rn:
+                tasks = get_my_tasks(rn)
                 if len(tasks) < 5:
-                    all_tasks = get_all_tasks()
-                    existing_ids = {t["id"] for t in tasks}
-                    for t in all_tasks:
-                        if t["id"] not in existing_ids:
+                    at = get_all_tasks()
+                    eids = {t["id"] for t in tasks}
+                    for t in at:
+                        if t["id"] not in eids:
                             tasks.append(t)
-                            if len(tasks) >= 9:
-                                break
+                            if len(tasks) >= 9: break
             else:
                 tasks = get_all_tasks()
-
-            logger.info(f"?¼ì? ë²„íŠ¼ ?´ë¦­ ??Task {len(tasks)}ê°?êµ¬ì„± (?¬ìš©?? {real_name})")
-
-            modal = build_task_select_modal(tasks)
-            client.views_update(view_id=view_id, view=modal)
-        except Exception as e:
-            logger.error(f"?¼ì? ëª¨ë‹¬ ?¤í”ˆ ?¤ë¥˜: {e}")
+            logger.info(f"tasks={len(tasks)} user={rn}")
+            client.views_update(view_id=vid, view=build_task_select_modal(tasks))
+        except Exception as e: logger.error(f"modal err: {e}")
 
     @app.action("search_keyword")
     def handle_search_keyword(ack, body, client, logger):
-        """ê²€?‰ì–´ ?…ë ¥ ??Enter ???¸ì…˜ DB ê²€????ëª¨ë‹¬ ê°±ì‹ ."""
         ack()
-
         try:
-            view = body["view"]
-            view_id = view["id"]
-            values = view["state"]["values"]
-
-            keyword = (values.get("block_search", {})
-                       .get("search_keyword", {})
-                       .get("value", "") or "").strip()
-
-            if not keyword:
-                return
-
-            logger.info(f"Task ê²€?? '{keyword}'")
-            tasks = search_tasks(keyword)
-            logger.info(f"ê²€??ê²°ê³¼: {len(tasks)}ê°?)
-
-            modal = build_task_select_modal(tasks, search_keyword=keyword)
-            client.views_update(view_id=view_id, view=modal)
-
-        except Exception as e:
-            logger.error(f"Task ê²€??ì²˜ë¦¬ ?¤ë¥˜: {e}")
+            view=body["view"]; vid=view["id"]; vals=view["state"]["values"]
+            kw=(vals.get("block_search",{}).get("search_keyword",{}).get("value","") or "").strip()
+            if not kw: return
+            tasks=search_tasks(kw)
+            logger.info(f"search {kw}: {len(tasks)}")
+            client.views_update(view_id=vid, view=build_task_select_modal(tasks, search_keyword=kw))
+        except Exception as e: logger.error(f"search err: {e}")
 
     @app.action("task_checkboxes")
-    def handle_task_checkboxes_action(ack, body, logger):
-        """checkboxes ?í˜¸?‘ìš© ack (dispatch_action ?´ë²¤??."""
-        ack()
+    def handle_task_checkboxes_action(ack, body, logger): ack()
 
     @app.view("modal_task_select")
     def handle_task_select(ack, body, client, logger):
         try:
-            values = body["view"]["state"]["values"]
-            selected_options = (values["block_task_select"]
-                                ["task_checkboxes"]
-                                ["selected_options"])
-
-            if not selected_options:
-                ack(response_action="errors", errors={
-                    "block_task_select": "Taskë¥??˜ë‚˜ ?´ìƒ ? íƒ??ì£¼ì„¸??"
-                })
-                return
-
-            # ? íƒ??Task ëª©ë¡ êµ¬ì„±
-            tasks = []
-            for opt in selected_options:
-                tasks.append({
-                    "id": opt["value"],
-                    "name": opt["text"]["text"],
-                })
-
-            logger.info(f"Task {len(tasks)}ê°?? íƒ: "
-                        f"{[t['name'] for t in tasks]}")
-
-            metadata = {
-                "tasks": tasks,
-                "current": 0,
-                "done": [],
-            }
-            metadata_json = json.dumps(metadata, ensure_ascii=False)
-
-            first = tasks[0]
-            is_new = (first["id"] == "NEW_TASK")
-            total = len(tasks)
-
-            modal = build_log_step_modal(
-                metadata_json=metadata_json,
-                task_name=first["name"],
-                step=1,
-                total=total,
-                is_new=is_new,
-            )
-            ack(response_action="push", view=modal)
-
-        except KeyError as e:
-            logger.error(f"Task ? íƒ ì²˜ë¦¬ ?¤ë¥˜: {e} / "
-                         f"values={body.get('view', {}).get('state', {}).get('values', {})}")
-            ack(response_action="errors", errors={
-                "block_task_select": "Taskë¥?? íƒ??ì£¼ì„¸??"
-            })
+            vals=body["view"]["state"]["values"]
+            sel=vals["block_task_select"]["task_checkboxes"]["selected_options"]
+            if not sel:
+                ack(response_action="errors",errors={"block_task_select":"Taskë¥¼ ì„ íƒí•´ ì£¼ì„¸ìš”."}); return
+            tasks=[{"id":o["value"],"name":o["text"]["text"]} for o in sel]
+            meta=json.dumps({"tasks":tasks,"current":0,"done":[]},ensure_ascii=False)
+            f=tasks[0]; is_new=(f["id"]=="NEW_TASK")
+            modal=build_log_step_modal(metadata_json=meta,task_name=f["name"],step=1,total=len(tasks),is_new=is_new)
+            ack(response_action="push",view=modal)
         except Exception as e:
-            logger.error(f"Task ? íƒ ì²˜ë¦¬ ?¤ë¥˜: {e}")
-            ack(response_action="errors", errors={
-                "block_task_select": "?¤ë¥˜ê°€ ë°œìƒ?ˆìŠµ?ˆë‹¤. ?¤ì‹œ ?œë„??ì£¼ì„¸??"
-            })
-
-    # ?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•
-    # ?¸ìˆ˜?¸ê³„ ëª¨ë‹¬ ?œì¶œ ì²˜ë¦¬
-    # ?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•?â•
+            logger.error(f"task select err: {e}")
+            ack(response_action="errors",errors={"block_task_select":"ì˜¤ë¥˜ ë°œìƒ."})
 
     @app.view("modal_handover_select")
     def handle_handover_select(ack, body, client, logger):
-        """?¸ìˆ˜?¸ê³„ Task ? íƒ ???¼ì??ì„œ ?´ìŠˆ/ë¦¬ìŠ¤??ì¶”ì¶œ ??DM ?„ì†¡."""
         ack()
-
-        user_id = body.get("user", {}).get("id")
-        values = body["view"]["state"]["values"]
-
-        selected = (values["block_handover_task"]
-                    ["handover_task_select"]
-                    ["selected_option"])
-
-        if not selected:
-            if user_id:
-                client.chat_postMessage(
-                    channel=user_id,
-                    blocks=build_error_message("Taskë¥?? íƒ??ì£¼ì„¸??")
-                )
+        uid=body.get("user",{}).get("id")
+        vals=body["view"]["state"]["values"]
+        sel=vals["block_handover_task"]["handover_task_select"]["selected_option"]
+        if not sel:
+            if uid: client.chat_postMessage(channel=uid,blocks=build_error_message("Task ì„ íƒ í•„ìš”."))
             return
-
-        task_id = selected["value"]
-        task_label = selected["text"]["text"]
-        logger.info(f"?¸ìˆ˜?¸ê³„ ?”ì²­: {task_label} ({task_id})")
-
+        tid=sel["value"]; tlabel=sel["text"]["text"]
+        logger.info(f"handover: {tlabel}")
         try:
-            # Task ?ì„¸ ?•ë³´ ì¡°íšŒ
-            page = notion_client.pages.retrieve(page_id=task_id)
-            task = _parse_task(page)
-
-            # ?¼ì??ì„œ ?´ìŠˆ/ë¦¬ìŠ¤??ì¶”ì¶œ
-            time.sleep(0.35)  # API ?ë„ ?œí•œ ë°©ì?
-            logs = get_handover_data(task_id)
-
-            blocks = build_handover_message(task, logs)
-            client.chat_postMessage(
-                channel=user_id,
-                text=f"?“‹ ?¸ìˆ˜?¸ê³„ ì´ˆì•ˆ ??{task['name']}",
-                blocks=blocks,
-            )
-            logger.info(f"?¸ìˆ˜?¸ê³„ ì´ˆì•ˆ ?„ì†¡ ?„ë£Œ: {task['name']} (?´ìŠˆ/ë¦¬ìŠ¤??{len(logs)}ê±?")
-
+            page=notion_client.pages.retrieve(page_id=tid)
+            task=_parse_task(page)
+            time.sleep(0.35)
+            logs=get_handover_data(tid)
+            blocks=build_handover_message(task,logs)
+            client.chat_postMessage(channel=uid,text="ì¸ìˆ˜ì¸ê³„ ì´ˆì•ˆ",blocks=blocks)
         except Exception as e:
-            logger.error(f"?¸ìˆ˜?¸ê³„ ì²˜ë¦¬ ?¤ë¥˜: {e}")
-            if user_id:
-                client.chat_postMessage(
-                    channel=user_id,
-                    blocks=build_error_message(str(e))
-                )
+            logger.error(f"handover err: {e}")
+            if uid: client.chat_postMessage(channel=uid,blocks=build_error_message(str(e)))
