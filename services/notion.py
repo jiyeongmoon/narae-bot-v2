@@ -580,6 +580,10 @@ def get_weekly_updated_tasks() -> list[dict]:
         return []
 
 
+# ── 하위 호환 별칭 (modal.py 등 기존 코드에서 append_daily_log로 호출) ──
+append_daily_log = save_log
+
+
 def get_handover_data(task_id: str) -> list[dict]:
     """특정 Task에 연결된 일지에서 이슈/리스크 추출."""
     if not NOTION_LOG_DB_ID or "your-log-db" in NOTION_LOG_DB_ID:
