@@ -39,6 +39,9 @@ NOTION_TASK_DB_ID = os.environ.get("NOTION_TASK_DB_ID")
 # 인원 DB (사내 인적 자원 정보 매칭용)
 NOTION_USER_DB_ID = os.environ.get("NOTION_USER_DB_ID", "")
 
+# 일지 기록용 DB (Phase 2에서 사용, 선택사항)
+NOTION_LOG_DB_ID = os.environ.get("NOTION_LOG_DB_ID", "")
+
 # ── 슬랙 채널 ─────────────────────────────────────────────────
 # 매일 17시 일지 작성 알림을 보낼 채널 ID
 SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
