@@ -51,18 +51,49 @@ def register_actions(app):
     @app.view("modal_task_select")
     def handle_task_select(ack, body, client, logger):
         try:
-            vals=body["view"]["state"]["values"]
-            sel=vals["block_task_select"]["task_checkboxes"]["selected_options"]
-            if not sel:
-                ack(response_action="errors",errors={"block_task_select":"Task를 선택해 주세요."}); return
-            tasks=[{"id":o["value"],"name":o["text"]["text"]} for o in sel]
-            meta=json.dumps({"tasks":tasks,"current":0,"done":[]},ensure_ascii=False)
-            f=tasks[0]; is_new=(f["id"]=="NEW_TASK")
-            modal=build_log_step_modal(metadata_json=meta,task_name=f["name"],step=1,total=len(tasks),is_new=is_new)
-            ack(response_action="push",view=modal)
+            vals = body["view"]["state"]["values"]
+
+            # 4개 섹션의 체크박스 선택값을 모두 합산
+            selected = []
+            for block_id, action_id in [
+                ("block_my_tasks",        "my_task_checkboxes"),
+                ("block_unassigned_tasks","unassigned_task_checkboxes"),
+                ("block_search_results",  "search_result_checkboxes"),
+                ("block_new_task_select", "new_task_checkboxes"),
+            ]:
+                opts = (vals.get(block_id, {})
+                        .get(action_id, {})
+                        .get("selected_options") or [])
+                selected.extend(opts)
+
+            if not selected:
+                ack(response_action="errors", errors={
+                    "block_my_tasks": "Task를 하나 이상 선택해 주세요."
+                })
+                return
+
+            tasks = [{"id": o["value"], "name": o["text"]["text"]} for o in selected]
+            logger.info(f"Task {len(tasks)}개 선택: {[t['name'] for t in tasks]}")
+
+            meta = {"tasks": tasks, "current": 0, "done": []}
+            meta_json = json.dumps(meta, ensure_ascii=False)
+            first  = tasks[0]
+            is_new = (first["id"] == "NEW_TASK")
+            modal  = build_log_step_modal(
+                metadata_json=meta_json,
+                task_name=first["name"],
+                step=1,
+                total=len(tasks),
+                is_new=is_new,
+            )
+            ack(response_action="push", view=modal)
+
         except Exception as e:
             logger.error(f"task select err: {e}")
-            ack(response_action="errors",errors={"block_task_select":"오류 발생."})
+            ack(response_action="errors", errors={
+                "block_my_tasks": "오류가 발생했습니다. 다시 시도해 주세요."
+            })
+
 
     @app.view("modal_handover_select")
     def handle_handover_select(ack, body, client, logger):

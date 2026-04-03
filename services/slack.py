@@ -45,19 +45,25 @@ def _task_label(task: dict) -> str:
 
 def build_task_select_modal(tasks: list[dict],
                             search_keyword: str = "") -> dict:
-    """활성 Task를 checkboxes로 표시 (최대 9개 + 새 Task = 10개)."""
-    options = []
-    for task in tasks[:9]:
-        label = _task_label(task)
-        options.append({
-            "text": {"type": "plain_text", "text": label},
-            "value": task["id"],
-        })
+    """활성 Task를 [내업무] / [미배정] 두 섹션으로 분리하여 표시."""
 
-    options.append({
-        "text": {"type": "plain_text", "text": "➕ 새 Task 생성"},
-        "value": "NEW_TASK",
-    })
+    # 내업무 / 미배정 분리
+    my_tasks         = [t for t in tasks if t.get("is_assigned")][:5]
+    unassigned_tasks = [t for t in tasks if not t.get("is_assigned")][:4]
+
+    def _make_option(task: dict) -> dict:
+        name = task["name"]
+        parts = []
+        if task.get("client"):   parts.append(task["client"])
+        if task.get("deadline"): parts.append(f"~{task['deadline']}")
+        suffix = f" ({', '.join(parts)})" if parts else ""
+        label  = f"{name}{suffix}"
+        if len(label) > 74:
+            label = label[:71] + "..."
+        return {
+            "text":  {"type": "plain_text", "text": label},
+            "value": task["id"],
+        }
 
     if search_keyword:
         guide_text = f"🔍 *\"{search_keyword}\"* 검색 결과입니다."
@@ -86,21 +92,79 @@ def build_task_select_modal(tasks: list[dict],
         },
     ]
 
-    if len(tasks) > 9 and not search_keyword:
+    # ── 내 업무 섹션 ──────────────────────────────────────────
+    if my_tasks:
+        blocks.append({"type": "divider"})
         blocks.append({
-            "type": "context",
-            "elements": [{"type": "mrkdwn",
-                          "text": "최근 9개 Task만 표시됩니다. 검색으로 찾아보세요."}],
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "✅ *내 업무*"},
+        })
+        blocks.append({
+            "type": "input",
+            "block_id": "block_my_tasks",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "내 담당 업무"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "my_task_checkboxes",
+                "options": [_make_option(t) for t in my_tasks],
+            }
         })
 
+    # ── 미배정 업무 섹션 ──────────────────────────────────────
+    if unassigned_tasks:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "⚠️ *미배정 업무* (선택 시 담당자로 자동 등록)"},
+        })
+        blocks.append({
+            "type": "input",
+            "block_id": "block_unassigned_tasks",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "미배정 업무"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "unassigned_task_checkboxes",
+                "options": [_make_option(t) for t in unassigned_tasks],
+            }
+        })
+
+    # ── 검색 결과 (섹션 구분 없이 표시) ───────────────────────
+    if search_keyword:
+        all_options = [_make_option(t) for t in tasks[:9]]
+        if not all_options:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "검색 결과가 없습니다."},
+            })
+        else:
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "input",
+                "block_id": "block_search_results",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "검색 결과"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": "search_result_checkboxes",
+                    "options": all_options,
+                }
+            })
+
+    # ── 새 Task 생성 ──────────────────────────────────────────
+    blocks.append({"type": "divider"})
     blocks.append({
         "type": "input",
-        "block_id": "block_task_select",
-        "label": {"type": "plain_text", "text": "Task 선택"},
+        "block_id": "block_new_task_select",
+        "optional": True,
+        "label": {"type": "plain_text", "text": "새 Task"},
         "element": {
             "type": "checkboxes",
-            "action_id": "task_checkboxes",
-            "options": options,
+            "action_id": "new_task_checkboxes",
+            "options": [
+                {"text": {"type": "plain_text", "text": "➕ 새 Task 생성"}, "value": "NEW_TASK"}
+            ],
         }
     })
 

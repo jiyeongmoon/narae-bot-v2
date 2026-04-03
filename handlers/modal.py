@@ -181,14 +181,35 @@ def register_modals(app):
                     )
                     return
 
-                append_daily_log(task["id"], log, task_name=task["name"])
+                append_daily_log(
+                    task_id=task["id"],
+                    task_name=task["name"],
+                    log_date=log["log_date"],
+                    completed=log["completed"],
+                    tomorrow=log["tomorrow"],
+                    consultation=log["consultation"],
+                    issues=log["issues"],
+                    risk=log["risk"],
+                    author_slack=user_name,
+                )
 
                 # 마지막 단계면 done 갱신 (DM에서 실제 URL 표시)
                 if next_idx >= total:
                     done[-1]["name"] = task["name"]
                     done[-1]["url"] = task["url"]
             else:
-                append_daily_log(task_id, log, task_name=current_task["name"])
+                append_daily_log(
+                    task_id=task_id,
+                    task_name=current_task["name"],
+                    log_date=log["log_date"],
+                    completed=log["completed"],
+                    tomorrow=log["tomorrow"],
+                    consultation=log["consultation"],
+                    issues=log["issues"],
+                    risk=log["risk"],
+                    status_update=new_status or "",
+                    author_slack=user_name,
+                )
 
             logger.info(f"일지 기록 완료 ({current+1}/{total}): "
                         f"{current_task['name']}")
