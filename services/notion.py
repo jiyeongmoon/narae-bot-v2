@@ -107,7 +107,7 @@ def ensure_log_db() -> str | None:
     """일지 DB 존재 확인, 없으면 생성. DB ID 반환."""
     global NOTION_LOG_DB_ID
 
-    if NOTION_LOG_DB_ID:
+    if NOTION_LOG_DB_ID and "your-log-db" not in NOTION_LOG_DB_ID:
         _ensure_log_db_properties()
         return NOTION_LOG_DB_ID
 
