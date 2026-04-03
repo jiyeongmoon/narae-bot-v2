@@ -183,6 +183,10 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             },
         ]
 
+    header_text = f"*{task_name}* 업무의 일지를 작성합니다."
+    if not is_new:
+        header_text += f" ({step}/{total})"
+
     task_info_block = [{
         "type": "section",
         "text": {"type": "mrkdwn", "text": header_text}
