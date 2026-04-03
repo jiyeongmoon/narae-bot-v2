@@ -20,7 +20,7 @@ from services.slack import (
 
 def register_commands(app):
 
-    @app.command("/ilji")
+    @app.command("/일지")
     def handle_ilji_command(ack, body, client, logger):
         ack()
 
@@ -56,7 +56,7 @@ def register_commands(app):
                 blocks=build_error_message(str(e))
             )
 
-    @app.command("/handover")
+    @app.command("/인수인계")
     def handle_handover_command(ack, body, client, logger):
         ack()
 
@@ -89,7 +89,7 @@ def register_commands(app):
                 blocks=build_error_message(str(e))
             )
 
-    @app.command("/weekly")
+    @app.command("/주간요약")
     def handle_weekly_summary_command(ack, body, client, respond, logger):
         ack()
 
