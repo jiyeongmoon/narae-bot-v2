@@ -310,7 +310,7 @@ def get_my_tasks(slack_display_name: str) -> list[dict]:
 
         # 우선순위에 따라 결합
         tasks = my_assigned + name_matched_unassigned + other_unassigned
-        logger.info(f"Task 조회: 총 {len(tasks)}개 (내 키워드: {my_keywords})")
+        logger.info(f"Task 조회 완료: 총 {len(tasks)}개 (매칭 키워드: {my_keywords})")
         return tasks
 
     except Exception as e:
@@ -350,15 +350,24 @@ def search_tasks(keyword: str) -> list[dict]:
     키워드로 전체 Task DB 검색. 필터 없이 업무명만으로 검색.
     """
     try:
+        # 활성 업무 필터 추가 (완료/보류된 업무 전면 제외)
+        active_filter = _build_active_task_filter()
+        final_filter = {
+            "and": [
+                *active_filter["and"],
+                {"property": PROP["title"], "title": {"contains": keyword}}
+            ]
+        }
+        
         response = notion.databases.query(
             database_id=NOTION_TASK_DB_ID,
-            filter={"property": PROP["title"], "title": {"contains": keyword}},
+            filter=final_filter,
             sorts=[{"property": PROP["deadline"], "direction": "ascending"}],
             page_size=100
         )
 
         tasks = [_parse_task(page) for page in response["results"]]
-        logger.info(f"Task 검색 '{keyword}': {len(tasks)}개")
+        logger.info(f"Task 필터링 검색 '{keyword}': {len(tasks)}개")
         return tasks
 
     except Exception as e:

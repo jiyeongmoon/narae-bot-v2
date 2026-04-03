@@ -43,8 +43,30 @@ def register_commands(app):
             )
             view_id = resp["view"]["id"]
 
-            tasks = get_all_tasks()
-            logger.info(f"조회된 Task: {len(tasks)}개")
+            # ── 사용자 실명 기반 내 업무 우선 조회 ────────────────
+            try:
+                user_info = client.users_info(user=user_id)
+                real_name = user_info["user"]["profile"].get("real_name", "")
+            except Exception:
+                real_name = ""
+
+            from services.notion import get_all_tasks, get_my_tasks
+            
+            if real_name:
+                tasks = get_my_tasks(real_name)
+                # 내 업무가 적으면 전체 직무 중 일부 충원 (최대 9개)
+                if len(tasks) < 5:
+                    all_tasks = get_all_tasks()
+                    existing_ids = {t["id"] for t in tasks}
+                    for t in all_tasks:
+                        if t["id"] not in existing_ids:
+                            tasks.append(t)
+                            if len(tasks) >= 9:
+                                break
+            else:
+                tasks = get_all_tasks()
+
+            logger.info(f"/일지 명령어 — Task {len(tasks)}개 구성 (사용자: {real_name})")
 
             modal = build_task_select_modal(tasks)
             client.views_update(view_id=view_id, view=modal)
