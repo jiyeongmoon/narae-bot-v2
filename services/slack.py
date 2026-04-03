@@ -1,0 +1,659 @@
+"""
+services/slack.py — 슬랙 모달·메시지 블록 빌더
+=================================================
+"""
+
+import datetime
+
+from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS
+
+
+# ════════════════════════════════════════════════════════════
+# 1. Task 선택 모달
+# ════════════════════════════════════════════════════════════
+
+def _task_label(task: dict) -> str:
+    """Task 목록 라벨: [상태] 업무명 (발주처, 단계, ~마감일) — 75자 제한."""
+    # 1. 상태 라벨 결정
+    prefix = "[✅내업무] " if task.get("is_assigned") else "[⚠️미배정] "
+    
+    # 2. 부가 정보 (입찰처, 단계 등) 구성
+    parts = []
+    if task.get("client"):
+        parts.append(task["client"])
+    if task.get("phase"):
+        parts.append(task["phase"])
+    if task.get("deadline"):
+        parts.append(f"~{task['deadline']}")
+    
+    suffix = f" ({', '.join(parts)})" if parts else ""
+    name = task["name"]
+    
+    # 3. 전체 길이 조절 (75자 제한)
+    full_label = f"{prefix}{name}{suffix}"
+    if len(full_label) > 75:
+        # 가용 공간 = 75 - prefix 길이 - suffix 길이 - 말줄임표(3)
+        available = 75 - len(prefix) - len(suffix) - 3
+        if available > 5:
+            name = f"{name[:available]}..."
+        else:
+            # 공간이 너무 부족하면 그냥 자름
+            return full_label[:72] + "..."
+    
+    return f"{prefix}{name}{suffix}"
+
+
+def build_task_select_modal(tasks: list[dict],
+                            search_keyword: str = "") -> dict:
+    """활성 Task를 checkboxes로 표시 (최대 9개 + 새 Task = 10개)."""
+    options = []
+    for task in tasks[:9]:
+        label = _task_label(task)
+        options.append({
+            "text": {"type": "plain_text", "text": label},
+            "value": task["id"],
+        })
+
+    options.append({
+        "text": {"type": "plain_text", "text": "➕ 새 Task 생성"},
+        "value": "NEW_TASK",
+    })
+
+    if search_keyword:
+        guide_text = f"🔍 *\"{search_keyword}\"* 검색 결과입니다."
+    else:
+        guide_text = "일지를 작성할 Task를 선택하세요. (복수 선택 가능)"
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": guide_text},
+        },
+        {
+            "type": "input",
+            "block_id": "block_search",
+            "dispatch_action": True,
+            "optional": True,
+            "label": {"type": "plain_text", "text": "🔍 키워드 검색 (Enter)"},
+            "element": {
+                "type": "plain_text_input",
+                "action_id": "search_keyword",
+                "placeholder": {"type": "plain_text", "text": "키워드 입력 후 Enter → 검색 결과로 갱신"},
+                "dispatch_action_config": {
+                    "trigger_actions_on": ["on_enter_pressed"]
+                },
+            }
+        },
+    ]
+
+    if len(tasks) > 9 and not search_keyword:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn",
+                          "text": "최근 9개 Task만 표시됩니다. 검색으로 찾아보세요."}],
+        })
+
+    blocks.append({
+        "type": "input",
+        "block_id": "block_task_select",
+        "label": {"type": "plain_text", "text": "Task 선택"},
+        "element": {
+            "type": "checkboxes",
+            "action_id": "task_checkboxes",
+            "options": options,
+        }
+    })
+
+    return {
+        "type": "modal",
+        "callback_id": "modal_task_select",
+        "title": {"type": "plain_text", "text": "📝 업무일지 작성"},
+        "submit": {"type": "plain_text", "text": "다음 →"},
+        "close": {"type": "plain_text", "text": "취소"},
+        "blocks": blocks,
+    }
+
+
+# ════════════════════════════════════════════════════════════
+# 2. 일지 입력 모달
+# ════════════════════════════════════════════════════════════
+
+def build_log_step_modal(metadata_json: str, task_name: str,
+                         step: int, total: int,
+                         is_new: bool = False) -> dict:
+    """단계별 일지 입력 모달. step/total로 진행 상태 표시."""
+    from services.notion import STATUS_OPTIONS
+
+    new_task_blocks = []
+    if is_new:
+        client_options = [
+            {"text": {"type": "plain_text", "text": c}, "value": c}
+            for c in CLIENT_OPTIONS
+        ]
+        phase_options = [
+            {"text": {"type": "plain_text", "text": p}, "value": p}
+            for p in PHASE_OPTIONS
+        ]
+        new_task_blocks = [
+            {
+                "type": "input",
+                "block_id": "block_new_task_name",
+                "label": {"type": "plain_text", "text": "업무명 *"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "new_task_name",
+                    "placeholder": {"type": "plain_text",
+                                    "text": "예: 무주 연차별 실행예산 조정"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_new_task_deadline",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "마감일 (선택)"},
+                "element": {
+                    "type": "datepicker",
+                    "action_id": "new_task_deadline",
+                    "placeholder": {"type": "plain_text", "text": "마감일 선택"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_new_task_client",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "발주처 (선택)"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "new_task_client",
+                    "placeholder": {"type": "plain_text", "text": "발주처 선택"},
+                    "options": client_options,
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_new_task_phase",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "현재단계 (선택)"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "new_task_phase",
+                    "placeholder": {"type": "plain_text", "text": "단계 선택"},
+                    "options": phase_options,
+                }
+            },
+        ]
+
+    task_info_block = [{
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": header_text}
+    }]
+
+    # 진행 상황 선택 (기존 Task인 경우에만 표시)
+    status_block = []
+    if not is_new:
+        status_options = [
+            {"text": {"type": "plain_text", "text": s}, "value": s}
+            for s in STATUS_OPTIONS
+        ]
+        status_block = [
+            {
+                "type": "input",
+                "block_id": "block_status",
+                "label": {"type": "plain_text", "text": "🏃 진행 상황 변경 (선택)"},
+                "optional": True,
+                "element": {
+                    "type": "static_select",
+                    "action_id": "status_select",
+                    "placeholder": {"type": "plain_text", "text": "상태 변경 시 선택"},
+                    "options": status_options,
+                },
+            }
+        ]
+
+    # title은 25자 제한이므로 간결하게
+    title_text = f"📝 일지 ({step}/{total})"
+
+    submit_text = "제출" if step == total else "다음 →"
+
+    return {
+        "type": "modal",
+        "callback_id": "modal_log_submit",
+        "private_metadata": metadata_json,
+        "title": {"type": "plain_text", "text": title_text},
+        "submit": {"type": "plain_text", "text": submit_text},
+        "close": {"type": "plain_text", "text": "취소"},
+        "blocks": [
+            *task_info_block,
+            *status_block,
+            *new_task_blocks,
+            {"type": "divider"},
+            {
+                "type": "input",
+                "block_id": "block_log_date",
+                "label": {"type": "plain_text", "text": "📅 일지 날짜"},
+                "element": {
+                    "type": "datepicker",
+                    "action_id": "log_date",
+                    "initial_date": datetime.date.today().isoformat(),
+                    "placeholder": {"type": "plain_text", "text": "날짜 선택"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_completed",
+                "label": {"type": "plain_text", "text": "✅ 오늘 완료"},
+                "hint": {"type": "plain_text",
+                         "text": "완료된 업무를 간단히 적어주세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "completed",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text",
+                                    "text": "완료한 업무 내용을 입력하세요"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_tomorrow",
+                "label": {"type": "plain_text", "text": "🔜 내일 예정"},
+                "hint": {"type": "plain_text",
+                         "text": "내일 진행할 업무나 이어서 할 작업을 적어주세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "tomorrow",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text",
+                                    "text": "내일 진행할 업무를 입력하세요"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_consultation",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "🤝 협의/보고"},
+                "hint": {"type": "plain_text",
+                         "text": "발주처·기관과 협의하거나 보고한 내용이 있으면 적어주세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "consultation",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text",
+                                    "text": "협의 또는 보고 내용을 입력하세요"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_issues",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "⚠️ 이슈/결정사항"},
+                "hint": {"type": "plain_text",
+                         "text": "팀이 알아야 할 문제나 중요한 합의 내용을 적어주세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "issues",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text",
+                                    "text": "이슈 또는 결정사항이 있으면 입력하세요"},
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_risk",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "🚨 마감 리스크"},
+                "hint": {"type": "plain_text",
+                         "text": "납품 D-7 이내이거나 일정 지연 우려가 있으면 적어주세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "risk",
+                    "placeholder": {"type": "plain_text",
+                                    "text": "마감 관련 리스크가 있으면 입력하세요"},
+                }
+            },
+        ]
+    }
+
+
+# ════════════════════════════════════════════════════════════
+# 3. 완료/오류 메시지
+# ════════════════════════════════════════════════════════════
+
+def build_success_message(task_name: str, task_url: str,
+                          is_new: bool = False) -> list:
+    action_text = "✅ 새 Task가 생성되고 일지가 기록" if is_new else "✅ 일지가 기록"
+    return [{
+        "type": "section",
+        "text": {"type": "mrkdwn",
+                 "text": f"{action_text}됐습니다!\n*{task_name}*\n<{task_url}|📎 노션에서 확인하기>"}
+    }]
+
+
+def build_multi_success_message(done: list[dict]) -> list:
+    """복수 Task 일지 완료 메시지.
+    done: [{"name": str, "url": str, "is_new": bool}, ...]
+    """
+    lines = []
+    for item in done:
+        prefix = "✨ " if item.get("is_new") else ""
+        suffix = " (새 Task)" if item.get("is_new") else ""
+        if item.get("url"):
+            lines.append(f"• {prefix}{item['name']}{suffix} — <{item['url']}|📎 노션에서 확인>")
+        else:
+            lines.append(f"• {prefix}{item['name']}{suffix}")
+
+    text = f"✅ 일지가 기록됐습니다! ({len(done)}건)\n" + "\n".join(lines)
+    return [{
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": text}
+    }]
+
+
+def build_daily_reminder_message() -> list:
+    """매일 17시 알림 메시지 블록 (일지 작성 버튼 포함)."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "🕐 오늘의 업무일지를 작성해 주세요.",
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📝 일지 작성"},
+                    "action_id": "open_ilji_modal",
+                    "style": "primary",
+                }
+            ],
+        },
+    ]
+
+
+def build_error_message(message: str) -> list:
+    return [{
+        "type": "section",
+        "text": {"type": "mrkdwn",
+                 "text": f"❌ 오류가 발생했습니다.\n{message}\n\n잠시 후 다시 시도하거나 관리자에게 문의하세요."}
+    }]
+
+
+# ════════════════════════════════════════════════════════════
+# 4. 주간 요약 메시지
+# ════════════════════════════════════════════════════════════
+
+def _group_by_person(tasks: list[dict]) -> dict[str, list]:
+    """담당자별 그룹화 (담당자 없으면 '미배정')."""
+    grouped: dict[str, list] = {}
+    for task in tasks:
+        assignees = task.get("assignees") or []
+        if not assignees:
+            grouped.setdefault("미배정", []).append(task)
+        else:
+            for name in assignees:
+                grouped.setdefault(name, []).append(task)
+    return grouped
+
+
+def _build_task_line(task: dict, today) -> str:
+    """Task 한 줄 요약 텍스트."""
+    import datetime
+
+    risk_flag = ""
+    if task.get("deadline"):
+        try:
+            dl = datetime.date.fromisoformat(task["deadline"])
+            if dl <= today + datetime.timedelta(days=7):
+                risk_flag = " 🚨"
+        except ValueError:
+            pass
+
+    client_str = f"{task['client']} | " if task.get("client") else ""
+    phase_str = f"{task['phase']} | " if task.get("phase") else ""
+    status_str = task["status"] if task.get("status") else ""
+    deadline_str = f" | ~{task['deadline']}" if task.get("deadline") else ""
+
+    notion_url = task.get("url", "")
+    name_link = f"<{notion_url}|{task['name']}>" if notion_url else task["name"]
+
+    return f"  {name_link}\n  {client_str}{phase_str}{status_str}{deadline_str}{risk_flag}"
+
+
+def build_weekly_summary_message(tasks: list[dict]) -> list:
+    """
+    담당자별 그룹화된 주간 요약 블록 빌더 (전체 공개용).
+    50블록 초과 시 truncate.
+    """
+    import datetime
+
+    if not tasks:
+        return [{
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": "📊 *주간 요약*\n\n이번 주 업데이트된 Task가 없습니다."},
+        }]
+
+    grouped = _group_by_person(tasks)
+    today = datetime.date.today()
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📊 주간 요약"},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn",
+                          "text": f"이번 주 업데이트된 Task {len(tasks)}건"}],
+        },
+        {"type": "divider"},
+    ]
+
+    for person, person_tasks in grouped.items():
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"*👤 {person}* ({len(person_tasks)}건)"},
+        })
+
+        for task in person_tasks:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _build_task_line(task, today)},
+            })
+
+            weekly_logs = task.get("weekly_logs", [])
+            if weekly_logs:
+                recent = weekly_logs[-2:]
+                log_text = "\n".join(f"  • {log.split(chr(10))[0]}" for log in recent)
+                if len(log_text) > 400:
+                    log_text = log_text[:397] + "..."
+                blocks.append({
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": log_text}],
+                })
+
+        blocks.append({"type": "divider"})
+
+        if len(blocks) >= 48:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn",
+                              "text": "⚠️ 요약이 너무 길어 일부를 생략했습니다."}],
+            })
+            break
+
+    return blocks
+
+
+# ════════════════════════════════════════════════════════════
+# 5. 인수인계 모달 + 메시지
+# ════════════════════════════════════════════════════════════
+
+def build_handover_select_modal(tasks: list[dict]) -> dict:
+    """인수인계 대상 Task를 static_select 드롭다운으로 1개 선택."""
+    options = []
+    for task in tasks[:100]:
+        label = _task_label(task)
+        options.append({
+            "text": {"type": "plain_text", "text": label},
+            "value": task["id"],
+        })
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": "인수인계 초안을 생성할 Task를 선택하세요."},
+        },
+        {
+            "type": "input",
+            "block_id": "block_handover_task",
+            "label": {"type": "plain_text", "text": "Task 선택"},
+            "element": {
+                "type": "static_select",
+                "action_id": "handover_task_select",
+                "placeholder": {"type": "plain_text", "text": "Task를 선택하세요"},
+                "options": options,
+            },
+        },
+    ]
+
+    return {
+        "type": "modal",
+        "callback_id": "modal_handover_select",
+        "title": {"type": "plain_text", "text": "📋 인수인계 초안"},
+        "submit": {"type": "plain_text", "text": "생성"},
+        "close": {"type": "plain_text", "text": "취소"},
+        "blocks": blocks,
+    }
+
+
+def build_handover_message(task: dict, logs: list[dict]) -> list:
+    """
+    인수인계 초안 Slack 메시지 블록.
+    task: _parse_task() 결과, logs: get_handover_data() 결과.
+    """
+    # Task 기본 정보
+    info_parts = [f"*📋 인수인계 초안 — {task['name']}*"]
+    if task.get("client"):
+        info_parts.append(f"• 발주처: {task['client']}")
+    if task.get("deadline"):
+        info_parts.append(f"• 마감일: {task['deadline']}")
+    if task.get("phase"):
+        info_parts.append(f"• 현재단계: {task['phase']}")
+    if task.get("assignees"):
+        info_parts.append(f"• 담당자: {', '.join(task['assignees'])}")
+    if task.get("url"):
+        info_parts.append(f"<{task['url']}|📎 노션에서 확인하기>")
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(info_parts)},
+        },
+        {"type": "divider"},
+    ]
+
+    if not logs:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": "기록된 이슈/리스크가 없습니다."},
+        })
+        return blocks
+
+    # 날짜별 이슈/리스크
+    for log in logs:
+        lines = [f"*📅 {log['date']}* ({log['author']})"]
+        if log.get("issues"):
+            lines.append(f"⚠️ 이슈/결정사항: {log['issues']}")
+        if log.get("risk"):
+            lines.append(f"🚨 마감 리스크: {log['risk']}")
+
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+        })
+
+        if len(blocks) >= 48:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn",
+                              "text": "⚠️ 내용이 너무 길어 일부를 생략했습니다."}],
+            })
+            break
+
+    return blocks
+
+
+def build_kpi_report_message(tasks: list[dict]) -> list:
+    """
+    대표 전용 KPI 리포트.
+    개인별: 담당 Task 수, 일지 작성 건수, 마감 임박 건수.
+    """
+    import datetime
+
+    if not tasks:
+        return [{
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": "📈 *KPI 리포트*\n\n이번 주 업데이트된 Task가 없습니다."},
+        }]
+
+    grouped = _group_by_person(tasks)
+    today = datetime.date.today()
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📈 주간 KPI 리포트"},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn",
+                          "text": f"이번 주 업데이트된 Task {len(tasks)}건 · 이 메시지는 본인에게만 표시됩니다"}],
+        },
+        {"type": "divider"},
+    ]
+
+    for person, person_tasks in grouped.items():
+        log_count = sum(len(t.get("weekly_logs", [])) for t in person_tasks)
+        risk_count = 0
+        for t in person_tasks:
+            if t.get("deadline"):
+                try:
+                    dl = datetime.date.fromisoformat(t["deadline"])
+                    if dl <= today + datetime.timedelta(days=7):
+                        risk_count += 1
+                except ValueError:
+                    pass
+
+        risk_str = f" · 🚨 마감임박 {risk_count}건" if risk_count else ""
+        kpi_line = f"Task {len(person_tasks)}건 · 일지 {log_count}건{risk_str}"
+
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"*👤 {person}*\n{kpi_line}"},
+        })
+
+        for task in person_tasks:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _build_task_line(task, today)},
+            })
+
+        blocks.append({"type": "divider"})
+
+        if len(blocks) >= 48:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn",
+                              "text": "⚠️ 요약이 너무 길어 일부를 생략했습니다."}],
+            })
+            break
+
+    return blocks
