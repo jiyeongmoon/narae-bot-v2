@@ -338,7 +338,7 @@ def update_task_assignee(page_id: str, slack_display_name: str) -> bool:
         return False
 
 
-def search_tasks(keyword: str) -> list[dict]:
+def search_tasks(keyword: str, slack_display_name: str = None) -> list[dict]:
     """키워드로 전체 Task DB 검색. 활성 업무(완료/보류 제외)만 반환."""
     try:
         active_filter = _build_active_task_filter()
@@ -356,8 +356,33 @@ def search_tasks(keyword: str) -> list[dict]:
             page_size=100
         )
 
-        tasks = [_parse_task(page) for page in response["results"]]
-        logger.info(f"Task 검색 '{keyword}': {len(tasks)}개")
+        my_keywords = []
+        if slack_display_name:
+            user_info = _get_user_info_from_db(slack_display_name)
+            my_keywords = [k.lower() for k in user_info["aliases"]]
+
+        tasks = []
+        for page in response["results"]:
+            task = _parse_task(page)
+            if my_keywords:
+                assignees = task.get("assignees") or []
+                if assignees:
+                    if any(any(kw in n.lower() for kw in my_keywords) for n in assignees):
+                        task["is_assigned"] = True
+                    else:
+                        task["is_assigned"] = False
+                else:
+                    # 미배정 중 업무명에 키워드 포함 시 임시로 본인 업무로 고려할지 여부 (get_my_tasks와 동일 로직)
+                    if any(kw in task["name"].lower() for kw in my_keywords):
+                        task["is_assigned"] = True
+                    else:
+                        task["is_assigned"] = False
+            else:
+                task["is_assigned"] = (len(task.get("assignees") or []) > 0) # 단순 배정 여부만 표시
+
+            tasks.append(task)
+
+        logger.info(f"Task 검색 '{keyword}': {len(tasks)}개 (사용자: {slack_display_name})")
         return tasks
 
     except Exception as e:

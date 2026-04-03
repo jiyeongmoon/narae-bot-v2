@@ -40,8 +40,16 @@ def register_actions(app):
             view=body["view"]; vid=view["id"]; vals=view["state"]["values"]
             kw=(vals.get("block_search",{}).get("search_keyword",{}).get("value","") or "").strip()
             if not kw: return
-            tasks=search_tasks(kw)
-            logger.info(f"search {kw}: {len(tasks)}")
+
+            uid = body.get("user", {}).get("id")
+            try:
+                ui = client.users_info(user=uid)
+                rn = ui["user"]["profile"].get("real_name", "")
+            except:
+                rn = None
+
+            tasks=search_tasks(kw, slack_display_name=rn)
+            logger.info(f"search {kw} for {rn}: {len(tasks)}")
             client.views_update(view_id=vid, view=build_task_select_modal(tasks, search_keyword=kw))
         except Exception as e: logger.error(f"search err: {e}")
 

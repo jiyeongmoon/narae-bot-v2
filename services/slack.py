@@ -45,17 +45,30 @@ def _task_label(task: dict) -> str:
 
 def build_task_select_modal(tasks: list[dict],
                             search_keyword: str = "") -> dict:
-    """활성 Task를 [내업무] / [미배정] 두 섹션으로 분리하여 표시."""
+    """활성 Task를 [내업무] / [미배정] / [기타] 섹션으로 분류하여 표시."""
 
-    # 내업무 / 미배정 분리
-    my_tasks         = [t for t in tasks if t.get("is_assigned")][:5]
-    unassigned_tasks = [t for t in tasks if not t.get("is_assigned")][:4]
+    # 3개 섹션으로 분류
+    my_tasks         = [t for t in tasks if t.get("is_assigned")]
+    unassigned_tasks = [t for t in tasks if not t.get("is_assigned") and not t.get("assignees")]
+    other_tasks      = [t for t in tasks if not t.get("is_assigned") and t.get("assignees")]
+
+    # 표시 제한 (너무 많으면 모달이 길어지므로 적절히 조절)
+    my_tasks         = my_tasks[:7]
+    unassigned_tasks = unassigned_tasks[:5]
+    other_tasks      = other_tasks[:5]
 
     def _make_option(task: dict) -> dict:
         name = task["name"]
         parts = []
         if task.get("client"):   parts.append(task["client"])
         if task.get("deadline"): parts.append(f"~{task['deadline']}")
+        
+        # 담당자가 본인이 아닌 경우 이름 표시
+        assignees = task.get("assignees")
+        is_assigned = task.get("is_assigned")
+        if assignees and not is_assigned:
+            parts.append(f"담당: {', '.join(assignees)}")
+
         suffix = f" ({', '.join(parts)})" if parts else ""
         label  = f"{name}{suffix}"
         if len(label) > 74:
@@ -116,13 +129,13 @@ def build_task_select_modal(tasks: list[dict],
         blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "⚠️ *미배정 업무* (선택 시 담당자로 자동 등록)"},
+            "text": {"type": "mrkdwn", "text": "⚠️ *미배정 업무*"},
         })
         blocks.append({
             "type": "input",
             "block_id": "block_unassigned_tasks",
             "optional": True,
-            "label": {"type": "plain_text", "text": "미배정 업무"},
+            "label": {"type": "plain_text", "text": "담당자 없음 (선택 시 자동 배정)"},
             "element": {
                 "type": "checkboxes",
                 "action_id": "unassigned_task_checkboxes",
@@ -130,27 +143,30 @@ def build_task_select_modal(tasks: list[dict],
             }
         })
 
-    # ── 검색 결과 (섹션 구분 없이 표시) ───────────────────────
-    if search_keyword:
-        all_options = [_make_option(t) for t in tasks[:9]]
-        if not all_options:
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "검색 결과가 없습니다."},
-            })
-        else:
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "input",
-                "block_id": "block_search_results",
-                "optional": True,
-                "label": {"type": "plain_text", "text": "검색 결과"},
-                "element": {
-                    "type": "checkboxes",
-                    "action_id": "search_result_checkboxes",
-                    "options": all_options,
-                }
-            })
+    # ── 기타 업무 (다른 사람 담당) ───────────────────────────
+    if other_tasks:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "👤 *기타 업무* (다른 사람 담당)"},
+        })
+        blocks.append({
+            "type": "input",
+            "block_id": "block_search_results", # 기존 ID 유지 (핸들러 호환성)
+            "optional": True,
+            "label": {"type": "plain_text", "text": "타인 배정 업무"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "search_result_checkboxes",
+                "options": [_make_option(t) for t in other_tasks],
+            }
+        })
+
+    if search_keyword and not (my_tasks or unassigned_tasks or other_tasks):
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "검색 결과가 없습니다."},
+        })
 
     # ── 새 Task 생성 ──────────────────────────────────────────
     blocks.append({"type": "divider"})
