@@ -4,6 +4,7 @@ services/slack.py — 슬랙 모달·메시지 블록 빌더
 """
 
 import datetime
+import json
 
 from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS
 
@@ -86,7 +87,7 @@ def build_task_select_modal(tasks: list[dict],
             label = label[:71] + "..."
         return {
             "text":  {"type": "plain_text", "text": label},
-            "value": task["id"],
+            "value": json.dumps({"id": task["id"], "status": task.get("status", "")}, ensure_ascii=False),
         }
 
     if search_keyword:
@@ -229,7 +230,9 @@ def build_task_select_modal(tasks: list[dict],
 def build_log_step_modal(metadata_json: str, task_name: str,
                          step: int, total: int,
                          user_id: str = None,
-                         is_new: bool = False) -> dict:
+                         is_new: bool = False,
+                         current_status: str = None,
+                         todos: list = None) -> dict:
     """단계별 일지 입력 모달. step/total로 진행 상태 표시."""
     from services.notion import STATUS_OPTIONS
 
@@ -312,6 +315,8 @@ def build_log_step_modal(metadata_json: str, task_name: str,
     if not is_new:
         header_text += f" ({step}/{total})"
 
+    has_todos = bool(todos and not is_new)
+
     task_info_block = [{
         "type": "section",
         "text": {"type": "mrkdwn", "text": header_text}
@@ -324,6 +329,13 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {"text": {"type": "plain_text", "text": s}, "value": s}
             for s in STATUS_OPTIONS
         ]
+        initial_opt = None
+        if current_status:
+            for opt in status_options:
+                if opt["value"] == current_status:
+                    initial_opt = opt
+                    break
+
         status_block = [
             {
                 "type": "input",
@@ -335,6 +347,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "action_id": "status_select",
                     "placeholder": {"type": "plain_text", "text": "상태 변경 시 선택"},
                     "options": status_options,
+                    "initial_option": initial_opt if initial_opt else None,
                 },
             }
         ]
@@ -357,6 +370,27 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             *assignee_block,
             *new_task_blocks,
             {"type": "divider"},
+            *([
+                {
+                    "type": "input",
+                    "block_id": "block_todo_check",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "📋 To-do 진행 현황 (완료 체크)"},
+                    "hint": {"type": "plain_text", "text": "체크 → '오늘 완료' / 미체크 → '내일 예정' 에 자동 반영"},
+                    "element": {
+                        "type": "checkboxes",
+                        "action_id": "todo_checkboxes",
+                        "options": [
+                            {"text": {"type": "plain_text", "text": t["text"][:74] if len(t["text"]) <= 74 else t["text"][:71]+"..."}, "value": t["id"]}
+                            for t in todos
+                        ],
+                        **(({"initial_options": [
+                            {"text": {"type": "plain_text", "text": t["text"][:74] if len(t["text"]) <= 74 else t["text"][:71]+"..."}, "value": t["id"]}
+                            for t in todos if t.get("checked")
+                        ]}) if any(t.get("checked") for t in todos) else {})
+                    }
+                }
+            ] if todos and not is_new else []),
             {
                 "type": "input",
                 "block_id": "block_log_date",
@@ -371,6 +405,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {
                 "type": "input",
                 "block_id": "block_completed",
+                "optional": has_todos,  # Todo 있으면 선택, 없으면 필수
                 "label": {"type": "plain_text", "text": "✅ 오늘 완료"},
                 "hint": {"type": "plain_text",
                          "text": "완료된 업무를 간단히 적어주세요."},
@@ -385,6 +420,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {
                 "type": "input",
                 "block_id": "block_tomorrow",
+                "optional": has_todos,  # Todo 있으면 선택, 없으면 필수
                 "label": {"type": "plain_text", "text": "🔜 내일 예정"},
                 "hint": {"type": "plain_text",
                          "text": "내일 진행할 업무나 이어서 할 작업을 적어주세요."},

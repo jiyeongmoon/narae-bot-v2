@@ -605,6 +605,39 @@ def get_weekly_updated_tasks() -> list[dict]:
         return []
 
 
+def get_task_todos(task_id: str) -> list[dict]:
+    """Task 페이지의 To-do 블록을 조회하여 반환.
+    반환: [{"id": block_id, "text": "내용", "checked": True/False}, ...]
+    """
+    try:
+        response = notion_client.blocks.children.list(block_id=task_id)
+        todos = []
+        for block in response.get("results", []):
+            if block.get("type") == "to_do":
+                todo_item = block["to_do"]
+                text = "".join(rt["plain_text"] for rt in todo_item.get("rich_text", []))
+                if text:
+                    todos.append({
+                        "id": block["id"],
+                        "text": text,
+                        "checked": todo_item.get("checked", False),
+                    })
+        return todos
+    except Exception as e:
+        logger.error(f"To-do 조회 실패 ({task_id}): {e}")
+        return []
+
+
+def update_todo_checked(block_id: str, checked: bool) -> bool:
+    """To-do 블록의 체크 상태를 업데이트."""
+    try:
+        notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
+        return True
+    except Exception as e:
+        logger.error(f"To-do 업데이트 실패 ({block_id}): {e}")
+        return False
+
+
 # ── 하위 호환 별칭 (modal.py 등 기존 코드에서 append_daily_log로 호출) ──
 append_daily_log = save_log
 

@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import json, time
-from services.notion import get_all_tasks, search_tasks, get_handover_data, notion_client, _parse_task, get_my_tasks
+from services.notion import (
+    get_all_tasks, search_tasks, get_handover_data, notion_client,
+    _parse_task, get_my_tasks, get_task_todos, update_todo_checked
+)
 from services.slack import build_log_step_modal, build_task_select_modal, build_handover_message, build_error_message
 
 def register_actions(app):
@@ -62,14 +65,12 @@ def register_actions(app):
             view_id = view["id"]
             selected_user_id = body["actions"][0]["selected_user"]
             
-            # 선택된 사용자의 실명 조회
             try:
                 ui = client.users_info(user=selected_user_id)
                 filter_name = ui["user"]["profile"].get("real_name", "") or ui["user"].get("name", "")
             except Exception:
                 filter_name = ""
 
-            # 현재 접속 유저의 실명 (헤더 유지용)
             uid = body.get("user", {}).get("id")
             try:
                 curr_ui = client.users_info(user=uid)
@@ -77,11 +78,9 @@ def register_actions(app):
             except:
                 curr_rn = ""
 
-            # 해당 담당자의 Task 조회
             tasks = get_my_tasks(filter_name)
             logger.info(f"filter assignee '{filter_name}': {len(tasks)} tasks")
             
-            # 모달 갱신 (filter_user_id 전달)
             client.views_update(
                 view_id=view_id, 
                 view=build_task_select_modal(
@@ -102,11 +101,11 @@ def register_actions(app):
         try:
             vals = body["view"]["state"]["values"]
 
-            # 모든 섹션의 체크박스 선택값을 합산 (block_id가 block_other_... 로 시작하는 경우 포함)
+            # 모든 섹션의 체크박스 선택값을 합산
             selected = []
             for block_id, data in vals.items():
-                if block_id.startswith("block_") and ("checkboxes" in block_id or "tasks" in block_id or "results" in block_id or "other_" in block_id or "new_task" in block_id or "my_tasks" in block_id or "unassigned" in block_id):
-                    # checkboxes 타입인 액션 찾기
+                if block_id.startswith("block_") and any(k in block_id for k in 
+                    ("checkboxes","tasks","results","other_","new_task","my_tasks","unassigned")):
                     for action_id, action_data in data.items():
                         opts = action_data.get("selected_options")
                         if opts:
@@ -118,20 +117,45 @@ def register_actions(app):
                 })
                 return
 
-            tasks = [{"id": o["value"], "name": o["text"]["text"]} for o in selected]
+            # JSON 형식 value 파싱 ({"id": ..., "status": ...} 또는 단순 문자열)
+            def parse_option(opt):
+                try:
+                    data = json.loads(opt["value"])
+                    return {
+                        "id": data["id"],
+                        "name": opt["text"]["text"],
+                        "status": data.get("status", ""),
+                    }
+                except (json.JSONDecodeError, KeyError):
+                    return {"id": opt["value"], "name": opt["text"]["text"], "status": ""}
+
+            tasks = [parse_option(o) for o in selected]
             logger.info(f"Task {len(tasks)}개 선택: {[t['name'] for t in tasks]}")
+
+            first = tasks[0]
+            is_new = (first["id"] == "NEW_TASK")
+
+            # 첫 번째 Task의 To-do 조회
+            todos = []
+            if not is_new and first["id"] != "NEW_TASK":
+                try:
+                    todos = get_task_todos(first["id"])
+                    logger.info(f"To-do 조회: {len(todos)}개")
+                except Exception as e:
+                    logger.warning(f"To-do 조회 실패 (무시): {e}")
 
             meta = {"tasks": tasks, "current": 0, "done": []}
             meta_json = json.dumps(meta, ensure_ascii=False)
-            first  = tasks[0]
-            is_new = (first["id"] == "NEW_TASK")
-            modal  = build_log_step_modal(
+
+            modal = build_log_step_modal(
                 metadata_json=meta_json,
                 task_name=first["name"],
                 step=1,
                 total=len(tasks),
                 user_id=body.get("user", {}).get("id"),
                 is_new=is_new,
+                current_status=first.get("status"),
+                todos=todos,
             )
             ack(response_action="push", view=modal)
 
@@ -169,38 +193,25 @@ def register_actions(app):
         """17:00 리마인드 예약 처리"""
         ack()
         uid = body.get("user", {}).get("id")
-        # 버튼의 value에 담긴 업무명 추출
         task_info = body.get("actions", [{}])[0].get("value", "업무")
         
-        # 17:00 KST 타임스탬프 계산
         import datetime
         now = datetime.datetime.now()
         target = now.replace(hour=17, minute=0, second=0, microsecond=0)
-        
         if now >= target:
             target += datetime.timedelta(days=1)
-        
-        post_at = int(target.timestamp())
         
         try:
             client.chat_scheduleMessage(
                 channel=uid,
-                post_at=post_at,
+                post_at=int(target.timestamp()),
                 text=f"🕐 *5시 리마인드*: '{task_info}' 관련하여 추가로 기록할 내용이 있는지 확인해 보세요!"
             )
-            # Ephemeral 메시지로 예약 완료 알림 (채널이 있는 경우만)
             channel_id = body.get("channel", {}).get("id")
             if channel_id:
-                client.chat_postEphemeral(
-                    channel=channel_id,
-                    user=uid,
-                    text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다."
-                )
+                client.chat_postEphemeral(channel=channel_id, user=uid, text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다.")
             else:
-                client.chat_postMessage(
-                    channel=uid,
-                    text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다."
-                )
+                client.chat_postMessage(channel=uid, text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다.")
         except Exception as e:
             logger.error(f"remind schedule err: {e}")
             if uid: client.chat_postMessage(channel=uid, text="❌ 리마인드 예약 중 오류가 발생했습니다.")

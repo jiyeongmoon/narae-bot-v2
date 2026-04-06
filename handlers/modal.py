@@ -1,10 +1,10 @@
 """
-handlers/modal.py — 일지 입력 모달 제출 처리 (멀티 Task 지원)
+handlers/modal.py — 일지 입력 모달 제출 처리 (멀티 Task + To-do 연동)
 ==============================================================
 핵심 흐름:
   1. private_metadata JSON 파싱 + 입력값 파싱 (빠름)
   2. ack() 즉시 호출 (3초 제한 준수)
-  3. 느린 작업: 슬랙 실명 조회 + 노션 저장 + DM 발송
+  3. 느린 작업: 슬랙 실명 조회 + 노션 저장 + To-do 업데이트 + DM 발송
 """
 
 import datetime
@@ -14,6 +14,8 @@ from services.notion import (
     append_daily_log,
     create_task,
     get_notion_user_id,
+    get_task_todos,
+    update_todo_checked,
 )
 from services.slack import (
     build_log_step_modal,
@@ -33,7 +35,7 @@ def register_modals(app):
 
         private_metadata JSON 구조:
         {
-          "tasks": [{"id": "...", "name": "..."}, ...],
+          "tasks": [{"id": "...", "name": "...", "status": "..."}, ...],
           "current": 0,
           "done": [{"name": "...", "url": "...", "is_new": false}, ...]
         }
@@ -63,7 +65,7 @@ def register_modals(app):
         task_id = current_task["id"]
         is_new = (task_id == "NEW_TASK")
 
-        # ── 입력값 파싱 (빠름) ────────────────────────────────
+        # ── 입력값 파싱 헬퍼 ──────────────────────────────────
         def get_val(block: str, action: str) -> str:
             return (values.get(block, {})
                     .get(action, {})
@@ -85,7 +87,15 @@ def register_modals(app):
                     .get(action, {})
                     .get("selected_user"))
 
-        # 새 Task 이름 검증 (ack 전에 처리해야 errors 응답 가능)
+        # ── To-do 체크 항목 파싱 ──────────────────────────────
+        checked_todo_ids = set()
+        todo_opts = (values.get("block_todo_check", {})
+                     .get("todo_checkboxes", {})
+                     .get("selected_options") or [])
+        for opt in todo_opts:
+            checked_todo_ids.add(opt["value"])
+
+        # 새 Task 이름 검증
         new_name = None
         if is_new:
             new_name = get_val("block_new_task_name", "new_task_name")
@@ -95,7 +105,7 @@ def register_modals(app):
                 })
                 return
 
-        # ── done에 현재 Task 추가 (기존 Task는 URL 계산 가능) ─
+        # ── done에 현재 Task 추가 ─────────────────────────────
         next_idx = current + 1
 
         if is_new:
@@ -116,71 +126,116 @@ def register_modals(app):
             metadata_json = json.dumps(meta, ensure_ascii=False)
 
             next_task = tasks[next_idx]
+            next_is_new = (next_task["id"] == "NEW_TASK")
+
+            # 다음 Task의 To-do 미리 조회 (빠른 ACK 위해 별도 처리)
+            next_todos = []
+            if not next_is_new:
+                try:
+                    next_todos = get_task_todos(next_task["id"])
+                except Exception:
+                    next_todos = []
+
             modal = build_log_step_modal(
                 metadata_json=metadata_json,
                 task_name=next_task["name"],
                 step=next_idx + 1,
                 total=total,
-                is_new=(next_task["id"] == "NEW_TASK"),
+                is_new=next_is_new,
+                current_status=next_task.get("status"),
+                todos=next_todos,
             )
             ack(response_action="update", view=modal)
         else:
             ack(response_action="clear")
 
         # ══════════════════════════════════════════════════════
-        # 느린 작업: 슬랙 실명 조회 + 노션 저장 + DM
+        # 느린 작업: 슬랙 실명 조회 + 노션 저장 + To-do 업데이트 + DM
         # ══════════════════════════════════════════════════════
-        user_id = body.get("user", {}).get("id")
-        
-        # 선택된 담당자 정보 (사용자 지정 배정)
+
+        # 선택된 담당자 정보
         selected_assignee_id = get_user_select("block_assignee", "assignee_select")
         target_user_id = selected_assignee_id or user_id
-        
+
         try:
             target_info = client.users_info(user=target_user_id)
             target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
         except Exception:
             target_name = ""
 
-        # 일지 작성자 정보 (기존 로직 유지)
+        # 일지 작성자 정보
         try:
             author_info = client.users_info(user=user_id)
             author_name = author_info["user"]["profile"].get("real_name", "") or author_info["user"].get("name", "")
         except Exception:
             author_name = ""
 
+        # ── To-do 기반 완료/예정 자동 조합 ───────────────────
+        manual_completed = get_val("block_completed", "completed")
+        manual_tomorrow  = get_val("block_tomorrow",  "tomorrow")
+
+        auto_completed_lines = []
+        auto_tomorrow_lines  = []
+
+        if not is_new and checked_todo_ids is not None:
+            # To-do 전체 목록 재조회 (checked_todo_ids로 분류)
+            try:
+                all_todos = get_task_todos(task_id)
+                for todo in all_todos:
+                    if todo["id"] in checked_todo_ids:
+                        auto_completed_lines.append(f"• {todo['text']}")
+                    else:
+                        auto_tomorrow_lines.append(f"• {todo['text']}")
+            except Exception as e:
+                logger.warning(f"To-do 재조회 실패: {e}")
+
+        # 수동 입력 + 자동 조합 (Todo 완료 항목을 앞에 표시)
+        combined_completed = "\n".join(filter(None, [
+            ("\n".join(auto_completed_lines)) if auto_completed_lines else "",
+            manual_completed
+        ]))
+        combined_tomorrow = "\n".join(filter(None, [
+            ("\n".join(auto_tomorrow_lines)) if auto_tomorrow_lines else "",
+            manual_tomorrow
+        ]))
+
         log_date = get_date("block_log_date", "log_date")
         log = {
             "author":       author_name,
             "log_date":     log_date or datetime.date.today().isoformat(),
-            "completed":    get_val("block_completed",    "completed"),
-            "tomorrow":     get_val("block_tomorrow",     "tomorrow"),
+            "completed":    combined_completed,
+            "tomorrow":     combined_tomorrow,
             "consultation": get_val("block_consultation", "consultation"),
             "issues":       get_val("block_issues",       "issues"),
             "risk":         get_val("block_risk",         "risk"),
         }
 
-        logger.info(f"일지 제출 ({current+1}/{total}): "
-                    f"{user_name}, task={current_task['name']}")
+        logger.info(f"일지 제출 ({current+1}/{total}): {author_name}, task={current_task['name']}")
 
         try:
-            # 상태 변경 처리 (선택된 경우)
             new_status = get_select("block_status", "status_select")
             if not is_new:
                 from services.notion import update_task_status, update_task_assignee
                 if new_status:
                     update_task_status(task_id, new_status)
-                # 명시적 담당자 배정 (선택된 담당자로 업데이트)
                 if target_name:
                     update_task_assignee(task_id, target_name)
 
+                # ── 체크된 To-do 항목을 노션에서도 체크 처리 ──
+                if checked_todo_ids is not None:
+                    try:
+                        all_todos = get_task_todos(task_id)
+                        for todo in all_todos:
+                            if todo["id"] in checked_todo_ids and not todo.get("checked"):
+                                update_todo_checked(todo["id"], True)
+                        logger.info(f"To-do 업데이트 완료: {len(checked_todo_ids)}개 체크됨")
+                    except Exception as e:
+                        logger.warning(f"To-do 노션 업데이트 실패 (무시): {e}")
+
             if is_new:
-                new_deadline = get_date("block_new_task_deadline",
-                                        "new_task_deadline")
-                new_client = get_select("block_new_task_client",
-                                        "new_task_client")
-                new_phase = get_select("block_new_task_phase",
-                                       "new_task_phase")
+                new_deadline = get_date("block_new_task_deadline", "new_task_deadline")
+                new_client   = get_select("block_new_task_client", "new_task_client")
+                new_phase    = get_select("block_new_task_phase",  "new_task_phase")
 
                 notion_user_id = get_notion_user_id(target_name or author_name)
 
@@ -211,10 +266,9 @@ def register_modals(app):
                     author_slack=author_name,
                 )
 
-                # 마지막 단계면 done 갱신 (DM에서 실제 URL 표시)
                 if next_idx >= total:
                     done[-1]["name"] = task["name"]
-                    done[-1]["url"] = task["url"]
+                    done[-1]["url"]  = task["url"]
             else:
                 append_daily_log(
                     task_id=task_id,
@@ -229,15 +283,12 @@ def register_modals(app):
                     author_slack=author_name,
                 )
 
-            logger.info(f"일지 기록 완료 ({current+1}/{total}): "
-                        f"{current_task['name']}")
+            logger.info(f"일지 기록 완료 ({current+1}/{total}): {current_task['name']}")
 
             # 마지막 단계: DM 발송
             if next_idx >= total:
                 if len(done) == 1:
-                    blocks = build_success_message(
-                        done[0]["name"], done[0]["url"], done[0]["is_new"]
-                    )
+                    blocks = build_success_message(done[0]["name"], done[0]["url"], done[0]["is_new"])
                 else:
                     blocks = build_multi_success_message(done)
 
