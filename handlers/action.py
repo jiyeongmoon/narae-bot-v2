@@ -117,19 +117,30 @@ def register_actions(app):
         try:
             vals = body["view"]["state"]["values"]
 
-            # 모든 섹션의 체크박스 선택값을 합산
+            # 체크박스 기반 기존 Task 선택값 수집
             selected = []
             for block_id, data in vals.items():
-                if block_id.startswith("block_") and any(k in block_id for k in 
-                    ("checkboxes","tasks","results","other_","new_task","my_tasks","unassigned")):
+                if block_id.startswith("block_") and any(k in block_id for k in
+                        ("tasks", "results", "other_", "my_tasks", "unassigned")):
                     for action_id, action_data in data.items():
                         opts = action_data.get("selected_options")
                         if opts:
                             selected.extend(opts)
 
-            if not selected:
+            # ── 새 Task 개수 파싱 (number_input) ─────────────────
+            new_task_count = 0
+            raw_count = (vals.get("block_new_task_select", {})
+                         .get("new_task_count", {})
+                         .get("value"))
+            if raw_count:
+                try:
+                    new_task_count = max(0, min(10, int(raw_count)))
+                except ValueError:
+                    new_task_count = 0
+
+            if not selected and new_task_count == 0:
                 ack(response_action="errors", errors={
-                    "block_search": "Task를 하나 이상 선택해 주세요."
+                    "block_search": "Task를 하나 이상 선택하거나 새 Task 생성 수를 입력해 주세요."
                 })
                 return
 
@@ -146,14 +157,19 @@ def register_actions(app):
                     return {"id": opt["value"], "name": opt["text"]["text"], "status": ""}
 
             tasks = [parse_option(o) for o in selected]
+
+            # 새 Task N개 추가
+            for i in range(1, new_task_count + 1):
+                tasks.append({"id": f"NEW_TASK_{i}", "name": f"새 Task {i}", "status": ""})
+
             logger.info(f"Task {len(tasks)}개 선택: {[t['name'] for t in tasks]}")
 
             first = tasks[0]
-            is_new = (first["id"] == "NEW_TASK")
+            is_new = first["id"].startswith("NEW_TASK")
 
             # 첫 번째 Task의 To-do 조회
             todos = []
-            if not is_new and first["id"] != "NEW_TASK":
+            if not is_new:
                 try:
                     todos = get_task_todos(first["id"])
                     logger.info(f"To-do 조회: {len(todos)}개")

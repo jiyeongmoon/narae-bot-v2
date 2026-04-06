@@ -127,19 +127,21 @@ def build_task_select_modal(tasks: list[dict],
                 },
             }
         },
-        # ── 새 Task 생성 (최상단으로 이동) ───────────────────────
+        # ── 새 Task 생성 (원하는 수만큼 입력) ───────────────────
         {"type": "divider"},
         {
             "type": "input",
             "block_id": "block_new_task_select",
             "optional": True,
-            "label": {"type": "plain_text", "text": "새 Task (선택 사항)"},
+            "label": {"type": "plain_text", "text": "➕ 새 Task 생성 (선택 사항)"},
+            "hint": {"type": "plain_text", "text": "생성할 Task 개수를 입력해 주세요. 입력하지 않으면 새 Task를 만들지 않습니다."},
             "element": {
-                "type": "checkboxes",
-                "action_id": "new_task_checkboxes",
-                "options": [
-                    {"text": {"type": "plain_text", "text": "➕ 새 Task 생성"}, "value": "NEW_TASK"}
-                ],
+                "type": "number_input",
+                "action_id": "new_task_count",
+                "is_decimal_allowed": False,
+                "min_value": "1",
+                "max_value": "10",
+                "placeholder": {"type": "plain_text", "text": "생성할 Task 수 (1~10)"},
             }
         },
     ]

@@ -65,7 +65,7 @@ def register_modals(app):
         total = len(tasks)
         current_task = tasks[current]
         task_id = current_task["id"]
-        is_new = (task_id == "NEW_TASK")
+        is_new = task_id.startswith("NEW_TASK")
 
         # ── 입력값 파싱 헬퍼 ──────────────────────────────────
         def get_val(block: str, action: str) -> str:
@@ -136,7 +136,7 @@ def register_modals(app):
             metadata_json = json.dumps(meta, ensure_ascii=False)
 
             next_task = tasks[next_idx]
-            next_is_new = (next_task["id"] == "NEW_TASK")
+            next_is_new = next_task["id"].startswith("NEW_TASK")
 
             # 다음 Task의 To-do 미리 조회 (빠른 ACK 위해 별도 처리)
             next_todos = []
