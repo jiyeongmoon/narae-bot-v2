@@ -578,21 +578,26 @@ def save_log(
             
             # 2. 기존 Task 페이지 본문에도 히스토리로 블록 추가 (여기가 핵심!)
             if task_id and task_id != "NEW_TASK":
-                # 구분선과 날짜 헤더 추가
-                history_header = [
-                    {"type": "divider", "divider": {}},
-                    {
+                try:
+                    # 블록 객체 재사용 시 발생할 수 있는 문제를 방지하기 위해 새로 생성
+                    history_blocks = []
+                    # 구분선
+                    history_blocks.append({"object": "block", "type": "divider", "divider": {}})
+                    # 헤더
+                    history_blocks.append({
+                        "object": "block",
                         "type": "heading_2",
                         "heading_2": {
                             "rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} 업무일지 ({author_slack})"}}]
                         }
-                    }
-                ]
-                try:
-                    notion_client.blocks.children.append(block_id=task_id, children=history_header + blocks)
-                    logger.info(f"Task 페이지 히스토리 추가 완료: {task_id}")
+                    })
+                    # 실제 내용 블록들 복사
+                    history_blocks.extend(blocks)
+                    
+                    notion_client.blocks.children.append(block_id=task_id, children=history_blocks)
+                    logger.info(f"Task 페이지 히스토리 추가 성공: {task_id}")
                 except Exception as te:
-                    logger.warning(f"Task 페이지 히스토리 추가 실패 (무시): {te}")
+                    logger.error(f"Task 페이지 히스토리 추가 실패: {te}")
 
         logger.info(f"일지 기록 완료: Log DB({page['id']}), Task({task_id})")
 
@@ -636,9 +641,10 @@ def get_task_todos(task_id: str) -> list[dict]:
 
     - 실제 to_do 블록 탐색
     - callout/toggle 등 컨테이너 내부도 탐색
-    - paragraph/bulleted_list_item 내의 '- [ ] ' 패턴도 파싱
+    - paragraph/bulleted_list_item 내의 '- [ ]' 또는 '- [o]' 패턴도 파싱
     """
-    TODO_PATTERN = re.compile(r"^\s*-\s*\[(x| )\]\s*(.+)$", re.IGNORECASE)
+    # - [o], - [x], - [ ] 패턴 모두 허용하되 o면 체크로 간주
+    TODO_PATTERN = re.compile(r"^\s*-\s*\[(x|o| )\]\s*(.+)$", re.IGNORECASE)
 
     def _fetch(block_id: str, depth: int = 0) -> list[dict]:
         if depth > 3:
@@ -660,9 +666,11 @@ def get_task_todos(task_id: str) -> list[dict]:
                     for i, line in enumerate(raw_text.splitlines()):
                         m = TODO_PATTERN.match(line)
                         if m:
+                            indicator = m.group(1).strip().lower()
+                            checked = indicator in ("x", "o")
                             todos.append({"id": f"{block['id']}::line_{i}",
                                           "text": m.group(2).strip(),
-                                          "checked": m.group(1).strip().lower() == "x",
+                                          "checked": checked,
                                           "block_type": "text_pattern"})
                     if block.get("has_children"):
                         todos.extend(_fetch(block["id"], depth + 1))
@@ -705,9 +713,11 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
                 for i, line in enumerate(lines):
                     if i == line_idx:
                         if checked:
-                            line = line.replace("- [ ]", "- [x]").replace("- [ ]", "- [x]")
+                            # [ ] 또는 [x] 를 [o] 로 변경
+                            line = line.replace("- [ ]", "- [o]").replace("- [x]", "- [o]").replace("- [X]", "- [o]")
                         else:
-                            line = line.replace("- [x]", "- [ ]").replace("- [X]", "- [ ]")
+                            # [o] 나 [x] 를 [ ] 로 변경
+                            line = line.replace("- [o]", "- [ ]").replace("- [x]", "- [ ]").replace("- [X]", "- [ ]")
                     new_lines.append(line)
                 
                 rt["text"]["content"] = "".join(new_lines)
