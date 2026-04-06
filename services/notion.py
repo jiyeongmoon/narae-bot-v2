@@ -287,10 +287,41 @@ def create_task(task_name: str, assignee_notion_id: str = None,
             parent={"database_id": NOTION_TASK_DB_ID},
             properties=properties,
         )
+        page_id = page["id"]
         title_list = page["properties"][PROP["title"]]["title"]
         name = title_list[0]["plain_text"] if title_list else task_name
         logger.info(f"새 Task 생성: {name}")
-        return {"id": page["id"], "name": name, "url": page["url"]}
+
+        # ── 페이지 본문 초기 포맷 삽입 ──────────────────────────
+        assignee_text = "미정"  # Notion API로 이름 역조회 생략, properties에 이미 반영됨
+        client_text   = client_name or "미정"
+        deadline_text = deadline    or "미정"
+        phase_text    = phase       or "미정"
+
+        body_blocks = [
+            {"object": "block", "type": "heading_2",
+             "heading_2": {"rich_text": [{"type": "text", "text": {"content": "[TASK 상세 내역]"}}]}},
+            {"object": "block", "type": "bulleted_list_item",
+             "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": f"담당자 : {assignee_text}"}}]}},
+            {"object": "block", "type": "bulleted_list_item",
+             "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": f"발주처 : {client_text}"}}]}},
+            {"object": "block", "type": "bulleted_list_item",
+             "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": f"현재단계 : {phase_text}"}}]}},
+            {"object": "block", "type": "bulleted_list_item",
+             "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": f"마감일 : {deadline_text}"}}]}},
+            {"object": "block", "type": "paragraph",
+             "paragraph": {"rich_text": []}},
+            {"object": "block", "type": "paragraph",
+             "paragraph": {"rich_text": [{"type": "text", "text": {"content": "To-do :"}, "annotations": {"bold": True}}]}},
+            {"object": "block", "type": "to_do",
+             "to_do": {"rich_text": [{"type": "text", "text": {"content": "할 일을 여기에 추가하세요"}}], "checked": False}},
+        ]
+        try:
+            notion_client.blocks.children.append(block_id=page_id, children=body_blocks)
+        except Exception as be:
+            logger.warning(f"Task 본문 블록 추가 실패 (기능에는 영향 없음): {be}")
+
+        return {"id": page_id, "name": name, "url": page["url"]}
 
     except Exception as e:
         logger.error(f"Task 생성 실패: {e}")
