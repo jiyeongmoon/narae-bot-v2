@@ -82,18 +82,30 @@ def _parse_task(page: dict) -> dict:
     props = page["properties"]
     title_list = props.get(PROP["title"], {}).get("title", [])
     name = title_list[0]["plain_text"] if title_list else "(제목 없음)"
+    
     deadline_raw = props.get(PROP["deadline"], {}).get("date")
     deadline = deadline_raw["start"] if deadline_raw else None
+    
     status_raw = props.get(PROP["status"], {}).get("status")
     status = status_raw["name"] if status_raw else None
+    
     assignees = props.get(PROP["assignee"], {}).get("people", [])
     assignee_names = [p.get("name", "") for p in assignees]
+    
+    client_raw = props.get(PROP["client"], {}).get("select")
+    client = client_raw["name"] if client_raw else None
+    
+    phase_raw = props.get(PROP["phase"], {}).get("select")
+    phase = phase_raw["name"] if phase_raw else None
+    
+    risk_flag = props.get(PROP["risk_flag"], {}).get("checkbox", False)
+
     return {
         "id": page["id"], "name": name, "deadline": deadline,
         "status": status, "assignees": assignee_names, "url": page["url"],
-        "client": props.get(PROP["client"], {}).get("select", {}).get("name"),
-        "phase": props.get(PROP["phase"], {}).get("select", {}).get("name"),
-        "risk_flag": props.get(PROP["risk_flag"], {}).get("checkbox", False),
+        "client": client,
+        "phase": phase,
+        "risk_flag": risk_flag,
     }
 
 
