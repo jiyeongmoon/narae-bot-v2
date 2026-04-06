@@ -414,26 +414,30 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
 
         if task_id and not task_id.startswith("NEW_TASK"):
             try:
-                # 1. 로그 엔트리 텍스트 블록 추가
-                notion_client.blocks.children.append(block_id=task_id, children=blocks)
-
-                # 2. To-do 블록: 마지막 to_do 다음에 삽입 (To-do 섹션 유지)
-                if todo_blocks:
-                    try:
-                        resp = notion_client.blocks.children.list(block_id=task_id)
-                        last_todo_id = None
-                        for b in resp.get("results", []):
-                            if b.get("type") == "to_do":
-                                last_todo_id = b["id"]
-                        if last_todo_id:
-                            notion_client.blocks.children.append(
-                                block_id=task_id, children=todo_blocks, after=last_todo_id
-                            )
-                        else:
-                            notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
-                    except Exception as te:
-                        logger.warning(f"To-do 섹션 삽입 실패, 하단에 추가: {te}")
+                if is_new_task:
+                    # 새 Task: To-do 먼저 (To-do 섹션에 위치) → 로그 나중에
+                    if todo_blocks:
                         notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
+                    notion_client.blocks.children.append(block_id=task_id, children=blocks)
+                else:
+                    # 기존 Task: 로그 먼저 (하단 추가) → 내일예정만 to_do 섹션에 삽입
+                    notion_client.blocks.children.append(block_id=task_id, children=blocks)
+                    if todo_blocks:
+                        try:
+                            resp = notion_client.blocks.children.list(block_id=task_id)
+                            last_todo_id = None
+                            for b in resp.get("results", []):
+                                if b.get("type") == "to_do":
+                                    last_todo_id = b["id"]
+                            if last_todo_id:
+                                notion_client.blocks.children.append(
+                                    block_id=task_id, children=todo_blocks, after=last_todo_id
+                                )
+                            else:
+                                notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
+                        except Exception as te:
+                            logger.warning(f"To-do 섹션 삽입 실패, 하단에 추가: {te}")
+                            notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
             except Exception as e:
                 logger.error(f"Task 상세 페이지 기록 실패: {e}")
 

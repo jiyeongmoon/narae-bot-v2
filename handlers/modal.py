@@ -199,8 +199,9 @@ def register_modals(app):
                 author_name = ""
 
             # ── To-do 기반 완료/예정 자동 조합 ───────────────────
-            manual_completed = get_val("block_completed", "completed")
-            manual_tomorrow  = get_val("block_tomorrow",  "tomorrow")
+            s = current + 1   # 현재 스텝 번호 (block_id 접미사와 동일)
+            manual_completed = get_val(f"block_completed_{s}", f"completed_{s}")
+            manual_tomorrow  = get_val(f"block_tomorrow_{s}",  f"tomorrow_{s}")
 
             auto_completed_lines = []
             auto_tomorrow_lines  = []
@@ -225,15 +226,15 @@ def register_modals(app):
                 manual_tomorrow
             ]))
 
-            log_date = get_date("block_log_date", "log_date")
+            log_date = get_date(f"block_log_date_{s}", f"log_date_{s}")
             log = {
                 "author":       author_name,
                 "log_date":     log_date or datetime.date.today().isoformat(),
                 "completed":    combined_completed,
                 "tomorrow":     combined_tomorrow,
-                "consultation": get_val("block_consultation", "consultation"),
-                "issues":       get_val("block_issues",       "issues"),
-                "risk":         get_val("block_risk",         "risk"),
+                "consultation": get_val(f"block_consultation_{s}", f"consultation_{s}"),
+                "issues":       get_val(f"block_issues_{s}",       f"issues_{s}"),
+                "risk":         get_val(f"block_risk_{s}",         f"risk_{s}"),
             }
 
             new_status = get_select("block_status", "status_select")
