@@ -152,93 +152,85 @@ def register_modals(app):
         # ══════════════════════════════════════════════════════
         # 느린 작업: 슬랙 실명 조회 + 노션 저장 + To-do 업데이트 + DM
         # ══════════════════════════════════════════════════════
-
-        # 선택된 담당자 정보
-        selected_assignee_id = get_user_select("block_assignee", "assignee_select")
-        target_user_id = selected_assignee_id or user_id
+        
+        # 1. 진행 상태 알림 즉시 발송
+        progress_msg = None
+        try:
+            progress_msg = client.chat_postMessage(
+                channel=user_id,
+                text=f"⏳ *{current_task['name']}* 일지를 기록하고 있습니다... 잠시만 기다려 주세요."
+            )
+        except Exception as pe:
+            logger.error(f"진행 알림 발송 실패: {pe}")
 
         try:
-            target_info = client.users_info(user=target_user_id)
-            target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
-        except Exception:
-            target_name = ""
+            # 선택된 담당자 정보
+            selected_assignee_id = get_user_select("block_assignee", "assignee_select")
+            target_user_id = selected_assignee_id or user_id
 
-        # 일지 작성자 정보
-        try:
-            author_info = client.users_info(user=user_id)
-            author_name = author_info["user"]["profile"].get("real_name", "") or author_info["user"].get("name", "")
-        except Exception:
-            author_name = ""
-
-        # ── To-do 기반 완료/예정 자동 조합 ───────────────────
-        manual_completed = get_val("block_completed", "completed")
-        manual_tomorrow  = get_val("block_tomorrow",  "tomorrow")
-
-        auto_completed_lines = []
-        auto_tomorrow_lines  = []
-
-        if not is_new and checked_todo_ids is not None:
-            # To-do 전체 목록 재조회 (checked_todo_ids로 분류)
             try:
-                all_todos = get_task_todos(task_id)
-                for todo in all_todos:
-                    if todo["id"] in checked_todo_ids:
-                        auto_completed_lines.append(f"• {todo['text']}")
-                    else:
-                        auto_tomorrow_lines.append(f"• {todo['text']}")
-            except Exception as e:
-                logger.warning(f"To-do 재조회 실패: {e}")
+                target_info = client.users_info(user=target_user_id)
+                target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
+            except Exception:
+                target_name = ""
 
-        # 수동 입력 + 자동 조합 (Todo 완료 항목을 앞에 표시)
-        combined_completed = "\n".join(filter(None, [
-            ("\n".join(auto_completed_lines)) if auto_completed_lines else "",
-            manual_completed
-        ]))
-        combined_tomorrow = "\n".join(filter(None, [
-            ("\n".join(auto_tomorrow_lines)) if auto_tomorrow_lines else "",
-            manual_tomorrow
-        ]))
+            # 일지 작성자 정보
+            try:
+                author_info = client.users_info(user=user_id)
+                author_name = author_info["user"]["profile"].get("real_name", "") or author_info["user"].get("name", "")
+            except Exception:
+                author_name = ""
 
-        log_date = get_date("block_log_date", "log_date")
-        log = {
-            "author":       author_name,
-            "log_date":     log_date or datetime.date.today().isoformat(),
-            "completed":    combined_completed,
-            "tomorrow":     combined_tomorrow,
-            "consultation": get_val("block_consultation", "consultation"),
-            "issues":       get_val("block_issues",       "issues"),
-            "risk":         get_val("block_risk",         "risk"),
-        }
+            # ── To-do 기반 완료/예정 자동 조합 ───────────────────
+            manual_completed = get_val("block_completed", "completed")
+            manual_tomorrow  = get_val("block_tomorrow",  "tomorrow")
 
-        logger.info(f"일지 제출 ({current+1}/{total}): {author_name}, task={current_task['name']}")
+            auto_completed_lines = []
+            auto_tomorrow_lines  = []
 
-        try:
+            if not is_new and checked_todo_ids is not None:
+                try:
+                    all_todos = get_task_todos(task_id)
+                    for todo in all_todos:
+                        if todo["id"] in checked_todo_ids:
+                            auto_completed_lines.append(f"• {todo['text']}")
+                        else:
+                            auto_tomorrow_lines.append(f"• {todo['text']}")
+                except Exception as e:
+                    logger.warning(f"To-do 재조회 실패: {e}")
+
+            combined_completed = "\n".join(filter(None, [
+                ("\n".join(auto_completed_lines)) if auto_completed_lines else "",
+                manual_completed
+            ]))
+            combined_tomorrow = "\n".join(filter(None, [
+                ("\n".join(auto_tomorrow_lines)) if auto_tomorrow_lines else "",
+                manual_tomorrow
+            ]))
+
+            log_date = get_date("block_log_date", "log_date")
+            log = {
+                "author":       author_name,
+                "log_date":     log_date or datetime.date.today().isoformat(),
+                "completed":    combined_completed,
+                "tomorrow":     combined_tomorrow,
+                "consultation": get_val("block_consultation", "consultation"),
+                "issues":       get_val("block_issues",       "issues"),
+                "risk":         get_val("block_risk",         "risk"),
+            }
+
             new_status = get_select("block_status", "status_select")
-            if not is_new:
-                from services.notion import update_task_status, update_task_assignee
-                if new_status:
-                    update_task_status(task_id, new_status)
-                if target_name:
-                    update_task_assignee(task_id, target_name)
-
-                # ── 체크된 To-do 항목을 노션에서도 체크 처리 ──
-                if checked_todo_ids is not None:
-                    try:
-                        all_todos = get_task_todos(task_id)
-                        for todo in all_todos:
-                            if todo["id"] in checked_todo_ids and not todo.get("checked"):
-                                update_todo_checked(todo["id"], True)
-                        logger.info(f"To-do 업데이트 완료: {len(checked_todo_ids)}개 체크됨")
-                    except Exception as e:
-                        logger.warning(f"To-do 노션 업데이트 실패 (무시): {e}")
-
+            
+            # --- 노션 모듈 임포트 ---
+            from services.notion import save_log as append_daily_log
+            
             if is_new:
+                from services.notion import create_task, get_notion_user_id
                 new_deadline = get_date("block_new_task_deadline", "new_task_deadline")
                 new_client   = get_select("block_new_task_client", "new_task_client")
                 new_phase    = get_select("block_new_task_phase",  "new_task_phase")
 
                 notion_user_id = get_notion_user_id(target_name or author_name)
-
                 task = create_task(
                     task_name=new_name,
                     assignee_notion_id=notion_user_id,
@@ -247,29 +239,37 @@ def register_modals(app):
                     phase=new_phase,
                 )
 
-                if not task:
-                    client.chat_postMessage(
-                        channel=user_id,
-                        blocks=build_error_message("Task 생성에 실패했습니다.")
+                if task:
+                    append_daily_log(
+                        task_id=task["id"],
+                        task_name=task["name"],
+                        log_date=log["log_date"],
+                        completed=log["completed"],
+                        tomorrow=log["tomorrow"],
+                        consultation=log["consultation"],
+                        issues=log["issues"],
+                        risk=log["risk"],
+                        author_slack=author_name,
                     )
-                    return
-
-                append_daily_log(
-                    task_id=task["id"],
-                    task_name=task["name"],
-                    log_date=log["log_date"],
-                    completed=log["completed"],
-                    tomorrow=log["tomorrow"],
-                    consultation=log["consultation"],
-                    issues=log["issues"],
-                    risk=log["risk"],
-                    author_slack=author_name,
-                )
-
-                if next_idx >= total:
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]
             else:
+                from services.notion import update_task_status, update_task_assignee, update_todo_checked
+                # 1. 상태/담당자 업데이트
+                if new_status: update_task_status(task_id, new_status)
+                if target_name: update_task_assignee(task_id, target_name)
+                
+                # 2. To-do 체크 처리
+                if checked_todo_ids:
+                    try:
+                        all_todos = get_task_todos(task_id)
+                        for todo in all_todos:
+                            if todo["id"] in checked_todo_ids and not todo.get("checked"):
+                                update_todo_checked(todo["id"], True)
+                    except Exception as te:
+                        logger.warning(f"To-do 체크 업데이트 무시됨: {te}")
+
+                # 3. 일지 기록
                 append_daily_log(
                     task_id=task_id,
                     task_name=current_task["name"],
@@ -283,22 +283,28 @@ def register_modals(app):
                     author_slack=author_name,
                 )
 
-            logger.info(f"일지 기록 완료 ({current+1}/{total}): {current_task['name']}")
-
-            # 마지막 단계: DM 발송
+            # 마지막 단계면 완료 메시지 발송
             if next_idx >= total:
                 if len(done) == 1:
                     blocks = build_success_message(done[0]["name"], done[0]["url"], done[0]["is_new"])
                 else:
                     blocks = build_multi_success_message(done)
-
-                logger.info(f"일지 기록 완료: {len(done)}건")
                 client.chat_postMessage(channel=user_id, blocks=blocks)
+                
+                # 진행 알림 삭제
+                if progress_msg:
+                    try: client.chat_delete(channel=user_id, ts=progress_msg["ts"])
+                    except: pass
 
         except Exception as e:
             logger.error(f"일지 제출 처리 오류: {e}")
-            if user_id:
-                client.chat_postMessage(
-                    channel=user_id,
-                    blocks=build_error_message(str(e))
-                )
+            # 진행 알림 삭제 시도
+            if progress_msg:
+                try: client.chat_delete(channel=user_id, ts=progress_msg["ts"])
+                except: pass
+            
+            # 구체적인 에러를 슬랙으로 알림
+            client.chat_postMessage(
+                channel=user_id,
+                text=f"❌ *일지 기록 실패*\n오류 내용: `{str(e)}`"
+            )

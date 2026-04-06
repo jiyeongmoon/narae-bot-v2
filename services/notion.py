@@ -105,11 +105,15 @@ def ensure_db_properties():
 
 def get_notion_user_id(slack_display_name: str) -> str | None:
     """인원 DB에서 Notion 사용자 ID를 가져옴."""
+    if not slack_display_name:
+        return None
     try:
-        user_info = _get_user_info_from_db(slack_display_name)
+        # 검색어 전처리 (공백 제거 등)
+        clean_name = slack_display_name.strip()
+        user_info = _get_user_info_from_db(clean_name)
         return user_info.get("person_id")
     except Exception as e:
-        logger.error(f"Notion 사용자 ID 조회 실패: {e}")
+        logger.error(f"Notion 사용자 ID 조회 실패 ({slack_display_name}): {e}")
         return None
 
 
@@ -551,55 +555,72 @@ def save_log(
             parent={"database_id": log_db_id},
             properties=properties,
         )
-        logger.info(f"일지 블록 추가 완료: {page['id']}")
+        logger.info(f"일지 DB 페이지 생성 완료: {page['id']}")
 
-        # 본문 블록 추가
-        blocks = []
+        # 1. 항목 수 계산 (빈 줄 제외)
+        def count_lines(text):
+            if not text: return 0
+            return len([l for l in text.splitlines() if l.strip()])
+
+        comp_count = count_lines(completed)
+        tom_count  = count_lines(tomorrow)
+
+        # 2. 작성자 이름 가져오기 (캐시 활용)
+        display_author = author_slack
+        users_info = cache_get("users_info")
+        if users_info and author_slack in users_info:
+            display_author = users_info[author_slack]["name"]
+
+        # 3. 토글 제목 구성
+        toggle_title = f"{log_date} {display_author} — ✅ {comp_count}건 · 🔜 {tom_count}건"
+
+        # 4. 토글 내부 블록(자식) 구성
+        toggle_children = []
         for header, text in [
-            ("✅ 오늘 완료", completed),
+            ("✅ 완료", completed),
             ("🔜 내일 예정", tomorrow),
             ("🤝 협의/보고", consultation),
             ("⚠️ 이슈/결정", issues),
             ("🚨 마감 리스크", risk),
         ]:
             if text:
-                blocks.append({
+                # 헤더 (굵게)
+                toggle_children.append({
                     "object": "block",
-                    "type": "heading_3",
-                    "heading_3": {
-                        "rich_text": [{"type": "text", "text": {"content": header}}]
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": header}, "annotations": {"bold": True}}]
                     }
                 })
-                blocks.append(_paragraph_block(text))
+                # 상세 내용
+                toggle_children.append(_paragraph_block(text))
+                # 간격용 빈 줄
+                toggle_children.append(_paragraph_block(""))
 
-        if blocks:
-            # 1. 일지 DB 페이지 내부에 블록 추가
-            notion_client.blocks.children.append(block_id=page["id"], children=blocks)
+        # 5. 최종 토글 블록 생성
+        log_blocks = [
+            {
+                "object": "block",
+                "type": "toggle",
+                "toggle": {
+                    "rich_text": [{"type": "text", "text": {"content": toggle_title}}],
+                    "children": toggle_children
+                }
+            }
+        ]
+
+        # 6. 블록 추가 (일지 DB 페이지 + Task 상세 페이지)
+        if log_blocks:
+            notion_client.blocks.children.append(block_id=page["id"], children=log_blocks)
             
-            # 2. 기존 Task 페이지 본문에도 히스토리로 블록 추가 (여기가 핵심!)
             if task_id and task_id != "NEW_TASK":
                 try:
-                    # 블록 객체 재사용 시 발생할 수 있는 문제를 방지하기 위해 새로 생성
-                    history_blocks = []
-                    # 구분선
-                    history_blocks.append({"object": "block", "type": "divider", "divider": {}})
-                    # 헤더
-                    history_blocks.append({
-                        "object": "block",
-                        "type": "heading_2",
-                        "heading_2": {
-                            "rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} 업무일지 ({author_slack})"}}]
-                        }
-                    })
-                    # 실제 내용 블록들 복사
-                    history_blocks.extend(blocks)
-                    
-                    notion_client.blocks.children.append(block_id=task_id, children=history_blocks)
-                    logger.info(f"Task 페이지 히스토리 추가 성공: {task_id}")
+                    notion_client.blocks.children.append(block_id=task_id, children=log_blocks)
+                    logger.info(f"Task 페이지 히스토리 토글 추가 성공: {task_id}")
                 except Exception as te:
                     logger.error(f"Task 페이지 히스토리 추가 실패: {te}")
 
-        logger.info(f"일지 기록 완료: Log DB({page['id']}), Task({task_id})")
+        logger.info(f"일지 기록 프로세스 완료: {task_id}")
 
         # 상태 업데이트 및 담당자 지정
         if status_update and status_update in STATUS_OPTIONS:
@@ -610,7 +631,7 @@ def save_log(
         return {"id": page["id"], "url": page["url"]}
 
     except Exception as e:
-        logger.error(f"일지 DB 기록 실패: {e}")
+        logger.error(f"일지 기록 실패: {e}")
         return None
 
 
@@ -731,7 +752,7 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
         notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
         return True
     except Exception as e:
-        logger.error(f"To-do 업데이트 실패 ({block_id}): {e}")
+        logger.warning(f"To-do 업데이트 실패 (무시 가능): {block_id} - {e}")
         return False
 
 
