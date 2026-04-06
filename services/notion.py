@@ -606,23 +606,40 @@ def get_weekly_updated_tasks() -> list[dict]:
 
 
 def get_task_todos(task_id: str) -> list[dict]:
-    """Task 페이지의 To-do 블록을 조회하여 반환.
+    """Task 페이지의 To-do 블록을 재귀적으로 조회하여 반환.
+    
+    callout/toggle 등 컨테이너 블록 내부에 중첩된 to_do 항목도 탐색함.
     반환: [{"id": block_id, "text": "내용", "checked": True/False}, ...]
     """
-    try:
-        response = notion_client.blocks.children.list(block_id=task_id)
+    def _fetch_todos_recursive(block_id: str, depth: int = 0) -> list[dict]:
+        """재귀적으로 블록 자식을 탐색하여 to_do 블록 수집."""
+        if depth > 3:  # 무한 루프 방지 (최대 3단계)
+            return []
         todos = []
-        for block in response.get("results", []):
-            if block.get("type") == "to_do":
-                todo_item = block["to_do"]
-                text = "".join(rt["plain_text"] for rt in todo_item.get("rich_text", []))
-                if text:
-                    todos.append({
-                        "id": block["id"],
-                        "text": text,
-                        "checked": todo_item.get("checked", False),
-                    })
+        try:
+            response = notion_client.blocks.children.list(block_id=block_id)
+            for block in response.get("results", []):
+                btype = block.get("type", "")
+                if btype == "to_do":
+                    todo_item = block["to_do"]
+                    text = "".join(rt["plain_text"] for rt in todo_item.get("rich_text", []))
+                    if text:
+                        todos.append({
+                            "id": block["id"],
+                            "text": text,
+                            "checked": todo_item.get("checked", False),
+                        })
+                # 컨테이너 블록은 자식을 재귀 탐색
+                elif btype in ("callout", "toggle", "quote", "bulleted_list_item",
+                               "numbered_list_item", "column", "column_list"):
+                    if block.get("has_children"):
+                        todos.extend(_fetch_todos_recursive(block["id"], depth + 1))
+        except Exception as e:
+            logger.warning(f"블록 조회 실패 (depth={depth}): {e}")
         return todos
+
+    try:
+        return _fetch_todos_recursive(task_id)
     except Exception as e:
         logger.error(f"To-do 조회 실패 ({task_id}): {e}")
         return []
