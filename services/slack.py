@@ -247,19 +247,62 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {"text": {"type": "plain_text", "text": p}, "value": p}
             for p in PHASE_OPTIONS
         ]
+        PREFIX_OPTIONS = [
+            {"text": {"type": "plain_text", "text": "진천"}, "value": "진천"},
+            {"text": {"type": "plain_text", "text": "무주"}, "value": "무주"},
+            {"text": {"type": "plain_text", "text": "청주"}, "value": "청주"},
+            {"text": {"type": "plain_text", "text": "괴산"}, "value": "괴산"},
+            {"text": {"type": "plain_text", "text": "음성"}, "value": "음성"},
+            {"text": {"type": "plain_text", "text": "내부"}, "value": "내부"},
+            {"text": {"type": "plain_text", "text": "기타"}, "value": "기타"},
+        ]
+        new_task_status_options = [
+            {"text": {"type": "plain_text", "text": s}, "value": s}
+            for s in STATUS_OPTIONS
+        ]
         new_task_blocks = [
+            # ─ 업무명 안내 텍스트
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "📌 *업무명 규칙*: `[대분류_소분류]` + 결과물명\n예) `[진천_도시재생] 컨설팅 일정 확정`  `[내부_경영지원] 2월 지출결의서 취합`"},
+            },
+            # ─ 대분류 (발주처)
+            {
+                "type": "input",
+                "block_id": "block_new_task_prefix",
+                "label": {"type": "plain_text", "text": "① 대분류 (발주처/조직) *"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "new_task_prefix",
+                    "placeholder": {"type": "plain_text", "text": "예: 진천, 무주, 내부"},
+                    "options": PREFIX_OPTIONS,
+                }
+            },
+            # ─ 소분류
+            {
+                "type": "input",
+                "block_id": "block_new_task_sub",
+                "label": {"type": "plain_text", "text": "② 소분류 (읍면동·사업유형) *"},
+                "hint": {"type": "plain_text", "text": "예: 도시재생, 덕산면, 전략계획, 경영지원"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "new_task_sub",
+                    "placeholder": {"type": "plain_text", "text": "도시재생"},
+                }
+            },
+            # ─ 결과물명
             {
                 "type": "input",
                 "block_id": "block_new_task_name",
-                "label": {"type": "plain_text", "text": "업무명 *"},
-                "hint": {"type": "plain_text", "text": "규칙: [대분류_소분류] 핵심성과물  예) [무주_재생사업] 주간 실적 보고서"},
+                "label": {"type": "plain_text", "text": "③ 결과물명 *"},
+                "hint": {"type": "plain_text", "text": "15자 이내 명사형으로 간결하게 작성"},
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "new_task_name",
-                    "placeholder": {"type": "plain_text",
-                                    "text": "[발주처_소분류] 결과물명  예: [진천_도시재생] 컨설팅 일정 확정"},
+                    "placeholder": {"type": "plain_text", "text": "컨설팅 일정 확정"},
                 }
             },
+            # ─ 마감일
             {
                 "type": "input",
                 "block_id": "block_new_task_deadline",
@@ -271,6 +314,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "placeholder": {"type": "plain_text", "text": "마감일 선택"},
                 }
             },
+            # ─ 발주처 (노션 필드용)
             {
                 "type": "input",
                 "block_id": "block_new_task_client",
@@ -283,6 +327,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "options": client_options,
                 }
             },
+            # ─ 현재단계
             {
                 "type": "input",
                 "block_id": "block_new_task_phase",
@@ -295,7 +340,22 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "options": phase_options,
                 }
             },
+            # ─ 진행상황
+            {
+                "type": "input",
+                "block_id": "block_new_task_status",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "진행상황"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "new_task_status",
+                    "placeholder": {"type": "plain_text", "text": "진행 예정"},
+                    "options": new_task_status_options,
+                    "initial_option": {"text": {"type": "plain_text", "text": "🙏 진행 예정"}, "value": "🙏 진행 예정"},
+                }
+            },
         ]
+
 
     # 담당자 선택 블록 추가 (항상 표시하여 명시적 배정 유도)
     assignee_block = [

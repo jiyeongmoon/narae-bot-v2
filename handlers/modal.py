@@ -16,6 +16,7 @@ from services.notion import (
     get_notion_user_id,
     get_task_todos,
     update_todo_checked,
+    update_task_assignee_by_notion_id,
 )
 from services.slack import (
     build_log_step_modal,
@@ -97,13 +98,19 @@ def register_modals(app):
 
         # 새 Task 이름 검증
         new_name = None
+        new_notion_assignee_id = None
         if is_new:
-            new_name = get_val("block_new_task_name", "new_task_name")
-            if not new_name:
-                ack(response_action="errors", errors={
-                    "block_new_task_name": "업무명을 입력해 주세요."
-                })
+            prefix  = get_select("block_new_task_prefix", "new_task_prefix") or ""
+            sub     = get_val("block_new_task_sub",    "new_task_sub")    or ""
+            outcome = get_val("block_new_task_name",   "new_task_name")   or ""
+            if not prefix or not sub or not outcome:
+                errors = {}
+                if not prefix:  errors["block_new_task_prefix"] = "대분류를 선택해 주세요."
+                if not sub:     errors["block_new_task_sub"]    = "소분류를 입력해 주세요."
+                if not outcome: errors["block_new_task_name"]   = "결과물명을 입력해 주세요."
+                ack(response_action="errors", errors=errors)
                 return
+            new_name = f"[{prefix}_{sub}] {outcome}"
 
         # ── done에 현재 Task 추가 ─────────────────────────────
         next_idx = current + 1
@@ -229,6 +236,7 @@ def register_modals(app):
                 new_deadline = get_date("block_new_task_deadline", "new_task_deadline")
                 new_client   = get_select("block_new_task_client", "new_task_client")
                 new_phase    = get_select("block_new_task_phase",  "new_task_phase")
+                new_initial_status = get_select("block_new_task_status", "new_task_status") or "🙏 진행 예정"
 
                 notion_user_id = get_notion_user_id(target_name or author_name)
                 task = create_task(
@@ -237,6 +245,7 @@ def register_modals(app):
                     deadline=new_deadline,
                     client_name=new_client,
                     phase=new_phase,
+                    initial_status=new_initial_status,
                 )
 
                 if task:
@@ -254,10 +263,17 @@ def register_modals(app):
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]
             else:
-                from services.notion import update_task_status, update_task_assignee, update_todo_checked
-                # 1. 상태/담당자 업데이트
+                from services.notion import update_task_status, update_todo_checked
+                # 1. 상태/담당자 업데이트 (Notion User ID 직접 사용)
                 if new_status: update_task_status(task_id, new_status)
-                if target_name: update_task_assignee(task_id, target_name)
+                if selected_assignee_id:
+                    notion_uid = get_notion_user_id(target_name)
+                    if notion_uid:
+                        update_task_assignee_by_notion_id(task_id, notion_uid)
+                    else:
+                        # fallback: 이름 기반 매칭 시도
+                        from services.notion import update_task_assignee
+                        update_task_assignee(task_id, target_name)
                 
                 # 2. To-do 체크 처리
                 if checked_todo_ids:

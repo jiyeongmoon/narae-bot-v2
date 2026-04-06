@@ -213,13 +213,13 @@ def get_weekly_updated_tasks() -> list[dict]:
 
 def create_task(task_name: str, assignee_notion_id: str = None,
                 deadline: str = None, client_name: str = None,
-                phase: str = None) -> dict | None:
+                phase: str = None, initial_status: str = None) -> dict | None:
     properties = {
         PROP["title"]: {
             "title": [{"text": {"content": task_name}}]
         },
         PROP["status"]: {
-            "status": {"name": "🙏 진행 예정"}
+            "status": {"name": initial_status or "🙏 진행 예정"}
         },
     }
 
@@ -266,6 +266,16 @@ def update_task_assignee(page_id: str, slack_display_name: str) -> bool:
         if uid: notion_client.pages.update(page_id=page_id, properties={PROP["assignee"]: {"people": [{"id": uid}]}})
         return True
     except Exception: return False
+
+def update_task_assignee_by_notion_id(page_id: str, notion_user_id: str) -> bool:
+    """노션 User ID를 직접 사용해 담당자 필드를 갱신합니다 (이름 매칭 없이 확실한 업데이트)."""
+    if not notion_user_id: return False
+    try:
+        notion_client.pages.update(page_id=page_id, properties={PROP["assignee"]: {"people": [{"id": notion_user_id}]}})
+        return True
+    except Exception as e:
+        logger.error(f"담당자 업데이트 실패(notion_id): {e}")
+        return False
 
 
 def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="", issues="", risk="", status_update="", author_slack=""):
