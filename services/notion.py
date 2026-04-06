@@ -7,6 +7,7 @@ import datetime
 import logging
 import re
 import time
+import os
 from notion_client import Client
 from config import NOTION_TOKEN, NOTION_TASK_DB_ID, NOTION_LOG_DB_ID, NOTION_USER_DB_ID
 from services.cache import get as cache_get, set as cache_set
@@ -28,7 +29,6 @@ PROP = {
     "risk_flag": "마감리스크",
 }
 
-# 인원 DB 속성 정의
 PROP_USER = {
     "name":   "이름",
     "alias":  "호칭",
@@ -42,34 +42,8 @@ EXCLUDE_STATUS  = ["✅ 완료", "⏭ 보류"]
 STATUS_OPTIONS  = ["🙏 진행 예정", "🚀 진행 중", "💡 피드백", "⏭ 보류", "✅ 완료"]
 DEADLINE_CUTOFF_DAYS = 7
 
-LOG_DB_PROPERTIES = {
-    "일지내용": {"title": {}},
-    "날짜":     {"date": {}},
-    "작성자":   {"people": {}},
-    "연결Task": {"relation": {
-        "database_id": NOTION_TASK_DB_ID,
-        "type": "single_property",
-        "single_property": {},
-    }},
-    "카테고리": {"multi_select": {
-        "options": [
-            {"name": "완료",   "color": "green"},
-            {"name": "예정",   "color": "blue"},
-            {"name": "협의",   "color": "yellow"},
-            {"name": "이슈",   "color": "orange"},
-            {"name": "리스크", "color": "red"},
-        ]
-    }},
-    "완료":     {"rich_text": {}},
-    "내일예정": {"rich_text": {}},
-    "협의사항": {"rich_text": {}},
-    "이슈":     {"rich_text": {}},
-    "리스크":   {"rich_text": {}},
-}
-
 
 def ensure_db_properties():
-    """DB에 필요한 속성 자동 추가."""
     try:
         db = notion_client.databases.retrieve(database_id=NOTION_TASK_DB_ID)
         existing = db.get("properties", {})
@@ -87,30 +61,17 @@ def ensure_db_properties():
 
 
 def get_notion_user_id(slack_display_name: str) -> str | None:
-    """인원 DB에서 Notion 사용자 ID를 가져옴."""
     if not slack_display_name: return None
     try:
-        clean_name = slack_display_name.strip()
-        user_info = _get_user_info_from_db(clean_name)
+        user_info = _get_user_info_from_db(slack_display_name.strip())
         return user_info.get("person_id")
     except Exception: return None
 
 
 def ensure_log_db() -> str | None:
-    """일지 DB 존재 확인, 없으면 생성."""
     global NOTION_LOG_DB_ID
-    if NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10:
-        return NOTION_LOG_DB_ID
-    try:
-        task_db = notion_client.databases.retrieve(database_id=NOTION_TASK_DB_ID)
-        new_db = notion_client.databases.create(
-            parent=task_db.get("parent", {}),
-            title=[{"type": "text", "text": {"content": "📋 일지 DB"}}],
-            properties=LOG_DB_PROPERTIES,
-        )
-        NOTION_LOG_DB_ID = new_db["id"]
-        return NOTION_LOG_DB_ID
-    except Exception: return None
+    if NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10: return NOTION_LOG_DB_ID
+    return None
 
 
 def _build_active_task_filter() -> dict:
@@ -137,14 +98,11 @@ def _parse_task(page: dict) -> dict:
 
 
 def _get_user_info_from_db(name: str) -> dict:
-    # 인원 DB 조회 실패 시 로깅을 줄이기 위해 사전 체크
     if not NOTION_USER_DB_ID or len(NOTION_USER_DB_ID) < 10:
         return {"name": name, "aliases": [name], "person_id": None}
-    
     cache_key = f"user_info:{name}"
     cached = cache_get(cache_key)
     if cached: return cached
-
     try:
         response = notion_client.databases.query(
             database_id=NOTION_USER_DB_ID,
@@ -161,8 +119,7 @@ def _get_user_info_from_db(name: str) -> dict:
         result = {"name": db_name, "aliases": [db_name], "person_id": person_list[0]["id"] if person_list else None}
         cache_set(cache_key, result, ttl=300)
         return result
-    except Exception:
-        return {"name": name, "aliases": [name], "person_id": None}
+    except Exception: return {"name": name, "aliases": [name], "person_id": None}
 
 
 def get_my_tasks(slack_display_name: str) -> list[dict]:
@@ -174,19 +131,36 @@ def get_my_tasks(slack_display_name: str) -> list[dict]:
             filter=_build_active_task_filter(),
             sorts=[{"property": PROP["deadline"], "direction": "ascending"}]
         )
-        my_assigned = []
-        others = []
-        for page in response["results"]:
-            task = _parse_task(page)
-            if any(any(kw in n.lower() for kw in my_keywords) for n in (task.get("assignees") or [])):
-                task["is_assigned"] = True
-                my_assigned.append(task)
-            else:
-                task["is_assigned"] = False
-                others.append(task)
-        return my_assigned + others
+        tasks = [_parse_task(p) for p in response["results"]]
+        for t in tasks:
+            t["is_assigned"] = any(any(kw in n.lower() for kw in my_keywords) for n in t.get("assignees", []))
+        return sorted(tasks, key=lambda x: not x["is_assigned"])
     except Exception: return []
 
+def search_tasks(keyword: str, slack_display_name: str = None) -> list[dict]:
+    try:
+        response = notion_client.databases.query(
+            database_id=NOTION_TASK_DB_ID,
+            filter={"and": [*_build_active_task_filter()["and"], {"property": PROP["title"], "title": {"contains": keyword}}]}
+        )
+        return [_parse_task(p) for p in response["results"]]
+    except Exception: return []
+
+def get_all_tasks() -> list[dict]:
+    try:
+        response = notion_client.databases.query(database_id=NOTION_TASK_DB_ID, filter=_build_active_task_filter())
+        return [_parse_task(p) for p in response["results"]]
+    except Exception: return []
+
+def get_weekly_updated_tasks() -> list[dict]:
+    try:
+        ago = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        response = notion_client.databases.query(
+            database_id=NOTION_TASK_DB_ID,
+            filter={"and": [{"timestamp": "last_edited_time", "last_edited_time": {"after": ago}}, *_build_active_task_filter()["and"]]}
+        )
+        return [_parse_task(p) for p in response["results"]]
+    except Exception: return []
 
 def update_task_status(page_id: str, status_name: str) -> bool:
     try:
@@ -194,122 +168,111 @@ def update_task_status(page_id: str, status_name: str) -> bool:
         return True
     except Exception: return False
 
-
 def update_task_assignee(page_id: str, slack_display_name: str) -> bool:
     try:
-        user_id = get_notion_user_id(slack_display_name)
-        if not user_id: return False
-        notion_client.pages.update(page_id=page_id, properties={PROP["assignee"]: {"people": [{"id": user_id}]}})
+        uid = get_notion_user_id(slack_display_name)
+        if uid: notion_client.pages.update(page_id=page_id, properties={PROP["assignee"]: {"people": [{"id": uid}]}})
         return True
     except Exception: return False
 
 
-def save_log(
-    task_id:       str,
-    task_name:     str,
-    log_date:      str,
-    completed:     str,
-    tomorrow:      str,
-    consultation:  str = "",
-    issues:        str = "",
-    risk:          str = "",
-    status_update: str = "",
-    author_slack:  str = "",
-) -> dict | None:
-    """일지 DB 기록 및 Task 상세 페이지에 평면형(Flat) 블록 추가."""
+def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="", issues="", risk="", status_update="", author_slack=""):
     log_db_id = ensure_log_db()
     if not log_db_id: return None
-
-    # 작성자명 정제 (Slack ID가 넘어올 경우 대비)
     display_author = author_slack
-    users_info = cache_get("users_info")
-    if users_info and author_slack in users_info:
-        display_author = users_info[author_slack]["name"]
+    uinfo = cache_get("users_info")
+    if uinfo and author_slack in uinfo: display_author = uinfo[author_slack]["name"]
 
     try:
-        # 1. 일지 DB 페이지 생성
         props = {
             "일지내용": {"title": [{"text": {"content": f"{log_date} | {task_name}"}}]},
             "날짜": {"date": {"start": log_date}},
         }
-        if task_id and task_id != "NEW_TASK":
-            props["연결Task"] = {"relation": [{"id": task_id}]}
+        if task_id and task_id != "NEW_TASK": props["연결Task"] = {"relation": [{"id": task_id}]}
+        aid = get_notion_user_id(author_slack)
+        if aid: props["작성자"] = {"people": [{"id": aid}]}
+        for k, v in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
+            if v: props[k] = {"rich_text": [{"text": {"content": v[:2000]}}]}
         
-        author_id = get_notion_user_id(author_slack)
-        if author_id: props["작성자"] = {"people": [{"id": author_id}]}
-
-        # 텍스트 속성
-        for key, val in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
-            if val: props[key] = {"rich_text": [{"text": {"content": val[:2000]}}]}
-
         page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
 
-        # 2. 본문 기록용 블록 리스트 (Flat 스타일 - 구분선 포함)
-        flat_blocks = [
+        # Flat Style Blocks
+        blocks = [
             {"object": "block", "type": "divider", "divider": {}},
-            {
-                "object": "block",
-                "type": "heading_3",
-                "heading_3": {
-                    "rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]
-                }
-            }
+            {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]}}
         ]
+        for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
+            if t: blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"{h}\n", "annotations": {"bold": True}}}, {"type": "text", "text": {"content": t[:2000]}}]}})
 
-        # 섹션별 추가
-        for header, text in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
-            if text:
-                flat_blocks.append({
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {
-                        "rich_text": [
-                            {"type": "text", "text": {"content": f"{header}\n"}, "annotations": {"bold": True}},
-                            {"type": "text", "text": {"content": text[:2000]}}
-                        ]
-                    }
-                })
-
-        # 3. 페이지 본문에 추가
-        notion_client.blocks.children.append(block_id=page["id"], children=flat_blocks)
+        notion_client.blocks.children.append(block_id=page["id"], children=blocks)
         if task_id and task_id != "NEW_TASK":
-            try:
-                notion_client.blocks.children.append(block_id=task_id, children=flat_blocks)
-                logger.info(f"Task 페이지({task_id}) 평면형 일지 추가 성공")
-            except Exception as e:
-                logger.error(f"Task 페이지 본문 추가 실패: {e}")
-
-        # 4. 부대 작업
+            try: notion_client.blocks.children.append(block_id=task_id, children=blocks)
+            except Exception: pass
+        
         if status_update: update_task_status(task_id, status_update)
         if author_slack: update_task_assignee(task_id, author_slack)
-
         return {"id": page["id"], "url": page["url"]}
-
-    except Exception as e:
-        logger.error(f"일지 기록 프로세스 실패: {e}")
-        return None
+    except Exception: return None
 
 append_daily_log = save_log
 
+
 def get_task_todos(task_id: str) -> list[dict]:
-    # 기존과 동일한 To-do 조회 로직 유지
-    try:
-        resp = notion_client.blocks.children.list(block_id=task_id)
+    TODO_PATTERN = re.compile(r"^\s*-\s*\[(x|o| )\]\s*(.+)$", re.IGNORECASE)
+    def _fetch(bid, depth=0):
+        if depth > 3: return []
         todos = []
-        for block in resp.get("results", []):
-            if block.get("type") == "to_do":
-                raw = block["to_do"]
-                text = "".join(rt["plain_text"] for rt in raw.get("rich_text", []))
-                if text:
-                    todos.append({"id": block["id"], "text": text, "checked": raw.get("checked", False)})
-            elif block.get("type") in ("paragraph", "bulleted_list_item"):
-                # 패턴 기반 To-do 파싱은 이전 turn 내용 참고
-                pass
+        try:
+            resp = notion_client.blocks.children.list(block_id=bid)
+            for b in resp.get("results", []):
+                bt = b.get("type", "")
+                if bt == "to_do":
+                    t = "".join(rt["plain_text"] for rt in b["to_do"].get("rich_text", []))
+                    if t: todos.append({"id": b["id"], "text": t, "checked": b["to_do"].get("checked", False), "block_type": "to_do"})
+                elif bt in ("paragraph", "bulleted_list_item"):
+                    txt = "".join(rt["plain_text"] for rt in b[bt].get("rich_text", []))
+                    for i, ln in enumerate(txt.splitlines()):
+                        m = TODO_PATTERN.match(ln)
+                        if m: todos.append({"id": f"{b['id']}::line_{i}", "text": m.group(2).strip(), "checked": m.group(1).lower() in ("x","o"), "block_type": "text_pattern"})
+                if b.get("has_children"): todos.extend(_fetch(b["id"], depth+1))
+        except Exception: pass
         return todos
-    except Exception: return []
+    return _fetch(task_id)
+
 
 def update_todo_checked(block_id: str, checked: bool) -> bool:
     try:
+        if "::line_" in block_id:
+            bid, lstr = block_id.split("::line_")
+            lidx = int(lstr)
+            b = notion_client.blocks.retrieve(block_id=bid)
+            bt = b.get("type", "")
+            rts = b.get(bt, {}).get("rich_text", [])
+            for rt in rts:
+                lns = rt.get("text", {}).get("content", "").splitlines(keepends=True)
+                for i, ln in enumerate(lns):
+                    if i == lidx:
+                        if checked: ln = ln.replace("- [ ]", "- [o]").replace("- [x]", "- [o]")
+                        else: ln = ln.replace("- [o]", "- [ ]").replace("- [x]", "- [ ]")
+                        lns[i] = ln
+                rt["text"]["content"] = "".join(lns)
+                rt.pop("plain_text", None)
+            notion_client.blocks.update(block_id=bid, **{bt: {"rich_text": rts}})
+            return True
         notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
         return True
     except Exception: return False
+
+def get_handover_data(task_id: str) -> list[dict]:
+    if not NOTION_LOG_DB_ID or len(NOTION_LOG_DB_ID) < 10: return []
+    try:
+        resp = notion_client.databases.query(database_id=NOTION_LOG_DB_ID, filter={"property": "연결Task", "relation": {"contains": task_id}})
+        res = []
+        for p in resp["results"]:
+            props = p["properties"]
+            def _rt(k):
+                r = props.get(k, {}).get("rich_text", [])
+                return r[0]["plain_text"] if r else ""
+            res.append({"date": props.get("날짜", {}).get("date", {}).get("start", ""), "author": (props.get("작성자", {}).get("people", []) or [{"name": "미상"}])[0]["name"], "issues": _rt("이슈"), "risk": _rt("리스크")})
+        return res
+    except Exception: return []
