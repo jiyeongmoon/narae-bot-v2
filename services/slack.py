@@ -44,18 +44,28 @@ def _task_label(task: dict) -> str:
 
 
 def build_task_select_modal(tasks: list[dict],
-                            search_keyword: str = "") -> dict:
-    """활성 Task를 [내업무] / [미배정] / [기타] 섹션으로 분류하여 표시."""
+                            user_real_name: str = "",
+                            search_keyword: str = "",
+                            filter_user_id: str = None) -> dict:
+    """활성 Task를 [성함] / [미배정] / [담당자별] 섹션으로 분류하여 표시."""
 
-    # 3개 섹션으로 분류
-    my_tasks         = [t for t in tasks if t.get("is_assigned")]
-    unassigned_tasks = [t for t in tasks if not t.get("is_assigned") and not t.get("assignees")]
-    other_tasks      = [t for t in tasks if not t.get("is_assigned") and t.get("assignees")]
+    # ── 필터링: 진행 중(🚀) 및 진행 예정(🙏) 상태만 ────────────────
+    ACTIVE_STATUSES = ["🚀 진행 중", "🙏 진행 예정"]
+    filtered_tasks = [t for t in tasks if t.get("status") in ACTIVE_STATUSES]
 
-    # 표시 제한 (너무 많으면 모달이 길어지므로 적절히 조절)
-    my_tasks         = my_tasks[:7]
-    unassigned_tasks = unassigned_tasks[:5]
-    other_tasks      = other_tasks[:5]
+    # 담당자별 그룹화 (services/slack.py의 _group_by_person 활용)
+    grouped = _group_by_person(filtered_tasks)
+
+    # 본인 업무 (기존 is_assigned 활용)
+    my_tasks = [t for t in filtered_tasks if t.get("is_assigned")]
+    
+    # 미배정 업무
+    unassigned_tasks = grouped.get("미배정", [])
+
+    # 타인 업무 (본인 및 미배정 제외)
+    # _group_by_person 결과에서 본인은 slack_display_name(또는 is_assigned)으로 걸러야 함
+    # 여기서는 간단히 is_assigned가 False인 그룹들만 추출
+    other_groups = {name: tks for name, tks in grouped.items() if name != "미배정" and not any(t.get("is_assigned") for t in tks)}
 
     def _make_option(task: dict) -> dict:
         name = task["name"]
@@ -79,7 +89,9 @@ def build_task_select_modal(tasks: list[dict],
         }
 
     if search_keyword:
-        guide_text = f"🔍 *\"{search_keyword}\"* 검색 결과입니다."
+        guide_text = f"🔍 *\"{search_keyword}\"* 검색 결과 (진행 중/예정만 표시)"
+    elif filter_user_id:
+        guide_text = "👤 *담당자 필터링* 결과입니다."
     else:
         guide_text = "일지를 작성할 Task를 선택하세요. (복수 선택 가능)"
 
@@ -87,6 +99,16 @@ def build_task_select_modal(tasks: list[dict],
         {
             "type": "section",
             "text": {"type": "mrkdwn", "text": guide_text},
+        },
+        {
+            "type": "section",
+            "block_id": "block_filter_assignee",
+            "text": {"type": "mrkdwn", "text": "👤 *담당자 필터*"},
+            "accessory": {
+                "type": "users_select",
+                "action_id": "filter_assignee",
+                "placeholder": {"type": "plain_text", "text": "팀원 선택 → 해당 담당자 업무 확인"},
+            }
         },
         {
             "type": "input",
@@ -105,18 +127,21 @@ def build_task_select_modal(tasks: list[dict],
         },
     ]
 
-    # ── 내 업무 섹션 ──────────────────────────────────────────
+    # self_header (본인 이름 표시)
+    self_header = f"✅ *{user_real_name}* 님 담당 업무" if user_real_name else "✅ *내 업무*"
+
+    # ── 내 업무 섹션 (제한 없음) ──────────────────────────────
     if my_tasks:
         blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "✅ *내 업무*"},
+            "text": {"type": "mrkdwn", "text": self_header},
         })
         blocks.append({
             "type": "input",
             "block_id": "block_my_tasks",
             "optional": True,
-            "label": {"type": "plain_text", "text": "내 담당 업무"},
+            "label": {"type": "plain_text", "text": "내 업무 전체"},
             "element": {
                 "type": "checkboxes",
                 "action_id": "my_task_checkboxes",
@@ -124,7 +149,7 @@ def build_task_select_modal(tasks: list[dict],
             }
         })
 
-    # ── 미배정 업무 섹션 ──────────────────────────────────────
+    # ── 미배정 업무 섹션 (상위 5건) ──────────────────────────
     if unassigned_tasks:
         blocks.append({"type": "divider"})
         blocks.append({
@@ -135,32 +160,33 @@ def build_task_select_modal(tasks: list[dict],
             "type": "input",
             "block_id": "block_unassigned_tasks",
             "optional": True,
-            "label": {"type": "plain_text", "text": "담당자 없음 (선택 시 자동 배정)"},
+            "label": {"type": "plain_text", "text": "담당자 없음 (최대 5건)"},
             "element": {
                 "type": "checkboxes",
                 "action_id": "unassigned_task_checkboxes",
-                "options": [_make_option(t) for t in unassigned_tasks],
+                "options": [_make_option(t) for t in unassigned_tasks[:5]],
             }
         })
 
-    # ── 기타 업무 (다른 사람 담당) ───────────────────────────
-    if other_tasks:
-        blocks.append({"type": "divider"})
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "👤 *기타 업무* (다른 사람 담당)"},
-        })
-        blocks.append({
-            "type": "input",
-            "block_id": "block_search_results", # 기존 ID 유지 (핸들러 호환성)
-            "optional": True,
-            "label": {"type": "plain_text", "text": "타인 배정 업무"},
-            "element": {
-                "type": "checkboxes",
-                "action_id": "search_result_checkboxes",
-                "options": [_make_option(t) for t in other_tasks],
-            }
-        })
+    # ── 타인 업무 (담당자별 그룹화, 상위 5건) ──────────────────
+    if other_groups:
+        for person, person_tasks in other_groups.items():
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"👤 *{person}* 님의 업무"},
+            })
+            blocks.append({
+                "type": "input",
+                "block_id": f"block_other_{person}", # 고유 ID 생성
+                "optional": True,
+                "label": {"type": "plain_text", "text": f"{person} 담당 업무 (상위 5건)"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": "search_result_checkboxes", # 핸들러 호환성을 위해 동일 유지
+                    "options": [_make_option(t) for t in person_tasks[:5]],
+                }
+            })
 
     if search_keyword and not (my_tasks or unassigned_tasks or other_tasks):
         blocks.append({
@@ -200,6 +226,7 @@ def build_task_select_modal(tasks: list[dict],
 
 def build_log_step_modal(metadata_json: str, task_name: str,
                          step: int, total: int,
+                         user_id: str = None,
                          is_new: bool = False) -> dict:
     """단계별 일지 입력 모달. step/total로 진행 상태 표시."""
     from services.notion import STATUS_OPTIONS
@@ -263,6 +290,22 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             },
         ]
 
+    # 담당자 선택 블록 추가 (항상 표시하여 명시적 배정 유도)
+    assignee_block = [
+        {
+            "type": "input",
+            "block_id": "block_assignee",
+            "label": {"type": "plain_text", "text": "👤 담당자 지정 (확실하게!)"},
+            "hint": {"type": "plain_text", "text": "본인 또는 해당 업무의 담당자를 선택해 주세요."},
+            "element": {
+                "type": "users_select",
+                "action_id": "assignee_select",
+                "initial_user": user_id if user_id else None,
+                "placeholder": {"type": "plain_text", "text": "담당자 선택"},
+            }
+        }
+    ]
+
     header_text = f"*{task_name}* 업무의 일지를 작성합니다."
     if not is_new:
         header_text += f" ({step}/{total})"
@@ -309,6 +352,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
         "blocks": [
             *task_info_block,
             *status_block,
+            *assignee_block,
             *new_task_blocks,
             {"type": "divider"},
             {
@@ -405,11 +449,24 @@ def build_log_step_modal(metadata_json: str, task_name: str,
 def build_success_message(task_name: str, task_url: str,
                           is_new: bool = False) -> list:
     action_text = "✅ 새 Task가 생성되고 일지가 기록" if is_new else "✅ 일지가 기록"
-    return [{
-        "type": "section",
-        "text": {"type": "mrkdwn",
-                 "text": f"{action_text}됐습니다!\n*{task_name}*\n<{task_url}|📎 노션에서 확인하기>"}
-    }]
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"{action_text}됐습니다!\n*{task_name}*\n<{task_url}|📎 노션에서 확인하기>"}
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "🔔 5시에 다시 리마인드"},
+                    "action_id": "remind_at_5pm",
+                    "value": task_name,
+                }
+            ]
+        }
+    ]
 
 
 def build_multi_success_message(done: list[dict]) -> list:
@@ -426,10 +483,23 @@ def build_multi_success_message(done: list[dict]) -> list:
             lines.append(f"• {prefix}{item['name']}{suffix}")
 
     text = f"✅ 일지가 기록됐습니다! ({len(done)}건)\n" + "\n".join(lines)
-    return [{
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": text}
-    }]
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": text}
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "🔔 5시에 다시 리마인드"},
+                    "action_id": "remind_at_5pm",
+                    "value": "여러 건의 업무",
+                }
+            ]
+        }
+    ]
 
 
 def build_daily_reminder_message() -> list:

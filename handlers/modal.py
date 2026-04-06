@@ -80,6 +80,11 @@ def register_modals(app):
                    .get("selected_option"))
             return opt["value"] if opt else None
 
+        def get_user_select(block: str, action: str) -> str | None:
+            return (values.get(block, {})
+                    .get(action, {})
+                    .get("selected_user"))
+
         # 새 Task 이름 검증 (ack 전에 처리해야 errors 응답 가능)
         new_name = None
         if is_new:
@@ -125,16 +130,28 @@ def register_modals(app):
         # ══════════════════════════════════════════════════════
         # 느린 작업: 슬랙 실명 조회 + 노션 저장 + DM
         # ══════════════════════════════════════════════════════
+        user_id = body.get("user", {}).get("id")
+        
+        # 선택된 담당자 정보 (사용자 지정 배정)
+        selected_assignee_id = get_user_select("block_assignee", "assignee_select")
+        target_user_id = selected_assignee_id or user_id
+        
         try:
-            user_info = client.users_info(user=user_id)
-            user_real_name = user_info["user"]["profile"].get("real_name", "")
+            target_info = client.users_info(user=target_user_id)
+            target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
         except Exception:
-            user_real_name = ""
-        user_name = user_real_name or body.get("user", {}).get("name", "")
+            target_name = ""
+
+        # 일지 작성자 정보 (기존 로직 유지)
+        try:
+            author_info = client.users_info(user=user_id)
+            author_name = author_info["user"]["profile"].get("real_name", "") or author_info["user"].get("name", "")
+        except Exception:
+            author_name = ""
 
         log_date = get_date("block_log_date", "log_date")
         log = {
-            "author":       user_name,
+            "author":       author_name,
             "log_date":     log_date or datetime.date.today().isoformat(),
             "completed":    get_val("block_completed",    "completed"),
             "tomorrow":     get_val("block_tomorrow",     "tomorrow"),
@@ -153,8 +170,9 @@ def register_modals(app):
                 from services.notion import update_task_status, update_task_assignee
                 if new_status:
                     update_task_status(task_id, new_status)
-                # 자가 배정 (미배정 업무인 경우 자동으로 내 업무로 등록)
-                update_task_assignee(task_id, user_name)
+                # 명시적 담당자 배정 (선택된 담당자로 업데이트)
+                if target_name:
+                    update_task_assignee(task_id, target_name)
 
             if is_new:
                 new_deadline = get_date("block_new_task_deadline",
@@ -164,7 +182,7 @@ def register_modals(app):
                 new_phase = get_select("block_new_task_phase",
                                        "new_task_phase")
 
-                notion_user_id = get_notion_user_id(user_name)
+                notion_user_id = get_notion_user_id(target_name or author_name)
 
                 task = create_task(
                     task_name=new_name,
@@ -190,7 +208,7 @@ def register_modals(app):
                     consultation=log["consultation"],
                     issues=log["issues"],
                     risk=log["risk"],
-                    author_slack=user_name,
+                    author_slack=author_name,
                 )
 
                 # 마지막 단계면 done 갱신 (DM에서 실제 URL 표시)
@@ -208,7 +226,7 @@ def register_modals(app):
                     issues=log["issues"],
                     risk=log["risk"],
                     status_update=new_status or "",
-                    author_slack=user_name,
+                    author_slack=author_name,
                 )
 
             logger.info(f"일지 기록 완료 ({current+1}/{total}): "

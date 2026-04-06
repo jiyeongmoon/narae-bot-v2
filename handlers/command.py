@@ -68,7 +68,7 @@ def register_commands(app):
 
             logger.info(f"/일지 명령어 — Task {len(tasks)}개 구성 (사용자: {real_name})")
 
-            modal = build_task_select_modal(tasks)
+            modal = build_task_select_modal(tasks, user_real_name=real_name)
             client.views_update(view_id=view_id, view=modal)
 
         except Exception as e:

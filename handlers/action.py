@@ -30,7 +30,7 @@ def register_actions(app):
             else:
                 tasks = get_all_tasks()
             logger.info(f"tasks={len(tasks)} user={rn}")
-            client.views_update(view_id=vid, view=build_task_select_modal(tasks))
+            client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn))
         except Exception as e: logger.error(f"modal err: {e}")
 
     @app.action("search_keyword")
@@ -50,8 +50,48 @@ def register_actions(app):
 
             tasks=search_tasks(kw, slack_display_name=rn)
             logger.info(f"search {kw} for {rn}: {len(tasks)}")
-            client.views_update(view_id=vid, view=build_task_select_modal(tasks, search_keyword=kw))
+            client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn, search_keyword=kw))
         except Exception as e: logger.error(f"search err: {e}")
+
+    @app.action("filter_assignee")
+    def handle_filter_assignee(ack, body, client, logger):
+        """담당자 필터 변경 시 모달 갱신"""
+        ack()
+        try:
+            view = body["view"]
+            view_id = view["id"]
+            selected_user_id = body["actions"][0]["selected_user"]
+            
+            # 선택된 사용자의 실명 조회
+            try:
+                ui = client.users_info(user=selected_user_id)
+                filter_name = ui["user"]["profile"].get("real_name", "") or ui["user"].get("name", "")
+            except Exception:
+                filter_name = ""
+
+            # 현재 접속 유저의 실명 (헤더 유지용)
+            uid = body.get("user", {}).get("id")
+            try:
+                curr_ui = client.users_info(user=uid)
+                curr_rn = curr_ui["user"]["profile"].get("real_name", "")
+            except:
+                curr_rn = ""
+
+            # 해당 담당자의 Task 조회
+            tasks = get_my_tasks(filter_name)
+            logger.info(f"filter assignee '{filter_name}': {len(tasks)} tasks")
+            
+            # 모달 갱신 (filter_user_id 전달)
+            client.views_update(
+                view_id=view_id, 
+                view=build_task_select_modal(
+                    tasks, 
+                    user_real_name=curr_rn, 
+                    filter_user_id=selected_user_id
+                )
+            )
+        except Exception as e:
+            logger.error(f"filter err: {e}")
 
     @app.action("task_checkboxes")
     def handle_task_checkboxes_action(ack, body, logger): ack()
@@ -61,22 +101,19 @@ def register_actions(app):
         try:
             vals = body["view"]["state"]["values"]
 
-            # 4개 섹션의 체크박스 선택값을 모두 합산
+            # 모든 섹션의 체크박스 선택값을 합산 (block_id가 block_other_... 로 시작하는 경우 포함)
             selected = []
-            for block_id, action_id in [
-                ("block_my_tasks",        "my_task_checkboxes"),
-                ("block_unassigned_tasks","unassigned_task_checkboxes"),
-                ("block_search_results",  "search_result_checkboxes"),
-                ("block_new_task_select", "new_task_checkboxes"),
-            ]:
-                opts = (vals.get(block_id, {})
-                        .get(action_id, {})
-                        .get("selected_options") or [])
-                selected.extend(opts)
+            for block_id, data in vals.items():
+                if block_id.startswith("block_") and ("checkboxes" in block_id or "tasks" in block_id or "results" in block_id or "other_" in block_id or "new_task" in block_id or "my_tasks" in block_id or "unassigned" in block_id):
+                    # checkboxes 타입인 액션 찾기
+                    for action_id, action_data in data.items():
+                        opts = action_data.get("selected_options")
+                        if opts:
+                            selected.extend(opts)
 
             if not selected:
                 ack(response_action="errors", errors={
-                    "block_my_tasks": "Task를 하나 이상 선택해 주세요."
+                    "block_search": "Task를 하나 이상 선택해 주세요."
                 })
                 return
 
@@ -92,6 +129,7 @@ def register_actions(app):
                 task_name=first["name"],
                 step=1,
                 total=len(tasks),
+                user_id=body.get("user", {}).get("id"),
                 is_new=is_new,
             )
             ack(response_action="push", view=modal)
@@ -99,7 +137,7 @@ def register_actions(app):
         except Exception as e:
             logger.error(f"task select err: {e}")
             ack(response_action="errors", errors={
-                "block_my_tasks": "오류가 발생했습니다. 다시 시도해 주세요."
+                "block_search": "오류가 발생했습니다. 다시 시도해 주세요."
             })
 
 
@@ -124,3 +162,44 @@ def register_actions(app):
         except Exception as e:
             logger.error(f"handover err: {e}")
             if uid: client.chat_postMessage(channel=uid,blocks=build_error_message(str(e)))
+
+    @app.action("remind_at_5pm")
+    def handle_remind_at_5pm(ack, body, client, logger):
+        """17:00 리마인드 예약 처리"""
+        ack()
+        uid = body.get("user", {}).get("id")
+        # 버튼의 value에 담긴 업무명 추출
+        task_info = body.get("actions", [{}])[0].get("value", "업무")
+        
+        # 17:00 KST 타임스탬프 계산
+        import datetime
+        now = datetime.datetime.now()
+        target = now.replace(hour=17, minute=0, second=0, microsecond=0)
+        
+        if now >= target:
+            target += datetime.timedelta(days=1)
+        
+        post_at = int(target.timestamp())
+        
+        try:
+            client.chat_scheduleMessage(
+                channel=uid,
+                post_at=post_at,
+                text=f"🕐 *5시 리마인드*: '{task_info}' 관련하여 추가로 기록할 내용이 있는지 확인해 보세요!"
+            )
+            # Ephemeral 메시지로 예약 완료 알림 (채널이 있는 경우만)
+            channel_id = body.get("channel", {}).get("id")
+            if channel_id:
+                client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=uid,
+                    text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다."
+                )
+            else:
+                client.chat_postMessage(
+                    channel=uid,
+                    text=f"✅ {target.strftime('%H:%M')}에 리마인드가 예약되었습니다."
+                )
+        except Exception as e:
+            logger.error(f"remind schedule err: {e}")
+            if uid: client.chat_postMessage(channel=uid, text="❌ 리마인드 예약 중 오류가 발생했습니다.")
