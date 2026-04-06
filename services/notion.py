@@ -284,7 +284,13 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
             {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]}}
         ]
         for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
-            if t: blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"{h}\n", "annotations": {"bold": True}}}, {"type": "text", "text": {"content": t[:2000]}}]}})
+            if t: blocks.append({
+                "object": "block", "type": "paragraph",
+                "paragraph": {"rich_text": [
+                    {"type": "text", "text": {"content": f"{h}  "}, "annotations": {"bold": True}},
+                    {"type": "text", "text": {"content": t[:2000]}}
+                ]}
+            })
 
         page_id = None
         page_url = None
