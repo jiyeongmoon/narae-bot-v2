@@ -492,17 +492,6 @@ def build_success_message(task_name: str, task_url: str,
             "type": "section",
             "text": {"type": "mrkdwn",
                      "text": f"{action_text}됐습니다!\n*{task_name}*\n<{task_url}|📎 노션에서 확인하기>"}
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "🔔 5시에 다시 리마인드"},
-                    "action_id": "remind_at_5pm",
-                    "value": task_name,
-                }
-            ]
         }
     ]
 
@@ -525,17 +514,6 @@ def build_multi_success_message(done: list[dict]) -> list:
         {
             "type": "section",
             "text": {"type": "mrkdwn", "text": text}
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "🔔 5시에 다시 리마인드"},
-                    "action_id": "remind_at_5pm",
-                    "value": "여러 건의 업무",
-                }
-            ]
         }
     ]
 

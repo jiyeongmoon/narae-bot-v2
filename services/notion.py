@@ -481,7 +481,6 @@ def update_task_status(page_id: str, status_name: str) -> bool:
 def _paragraph_block(text: str) -> dict:
     """단일 paragraph 블록 생성."""
     return {
-        "object": "block",
         "type":   "paragraph",
         "paragraph": {
             "rich_text": [{"type": "text", "text": {"content": text[:2000]}}]
@@ -501,7 +500,7 @@ def save_log(
     status_update: str = "",
     author_slack:  str = "",
 ) -> dict | None:
-    """일지 DB에 새 페이지를 생성합니다."""
+    """일지 DB에 새 페이지를 생성하고, Task 페이지 본문에 히스토리를 추가합니다."""
     log_db_id = ensure_log_db()
     if not log_db_id:
         logger.error("일지 DB ID를 가져올 수 없습니다.")
@@ -511,53 +510,45 @@ def save_log(
     title_text = f"{log_date} | {task_name}"
 
     properties = {
-        "일지내용": {
-            "title": [{"text": {"content": title_text}}]
-        },
+        "일지내용": {"title": [{"text": {"content": title_text}}]},
         "날짜": {"date": {"start": log_date}},
     }
 
     # 연결Task
     if task_id and task_id != "NEW_TASK":
-        properties["연결Task"] = {
-            "relation": [{"id": task_id}]
-        }
+        properties["연결Task"] = {"relation": [{"id": task_id}]}
 
     # 작성자 (Notion Person)
     author_id = get_notion_user_id(author_slack) if author_slack else None
     if author_id:
         properties["작성자"] = {"people": [{"id": author_id}]}
 
-    # 텍스트 속성
-    if completed:
-        properties["완료"]     = {"rich_text": [{"text": {"content": completed[:2000]}}]}
-    if tomorrow:
-        properties["내일예정"] = {"rich_text": [{"text": {"content": tomorrow[:2000]}}]}
-    if consultation:
-        properties["협의사항"] = {"rich_text": [{"text": {"content": consultation[:2000]}}]}
-    if issues:
-        properties["이슈"]     = {"rich_text": [{"text": {"content": issues[:2000]}}]}
-    if risk:
-        properties["리스크"]   = {"rich_text": [{"text": {"content": risk[:2000]}}]}
+    # 텍스트 속성 (DB 컬럼용)
+    if completed:    properties["완료"]     = {"rich_text": [{"text": {"content": completed[:2000]}}]}
+    if tomorrow:     properties["내일예정"] = {"rich_text": [{"text": {"content": tomorrow[:2000]}}]}
+    if consultation: properties["협의사항"] = {"rich_text": [{"text": {"content": consultation[:2000]}}]}
+    if issues:       properties["이슈"]     = {"rich_text": [{"text": {"content": issues[:2000]}}]}
+    if risk:         properties["리스크"]   = {"rich_text": [{"text": {"content": risk[:2000]}}]}
 
     # 카테고리 태그
     categories = []
-    if completed:   categories.append({"name": "완료"})
-    if tomorrow:    categories.append({"name": "예정"})
+    if completed:    categories.append({"name": "완료"})
+    if tomorrow:     categories.append({"name": "예정"})
     if consultation: categories.append({"name": "협의"})
-    if issues:      categories.append({"name": "이슈"})
-    if risk:        categories.append({"name": "리스크"})
+    if issues:       categories.append({"name": "이슈"})
+    if risk:         categories.append({"name": "리스크"})
     if categories:
         properties["카테고리"] = {"multi_select": categories}
 
     try:
+        # 1. 일지 DB 페이지 생성
         page = notion_client.pages.create(
             parent={"database_id": log_db_id},
             properties=properties,
         )
-        logger.info(f"일지 DB 페이지 생성 완료: {page['id']}")
+        logger.info(f"일지 DB 페이지 생성 성공: {page['id']}")
 
-        # 1. 항목 수 계산 (빈 줄 제외)
+        # 2. 본문 기록용 블록 구성 (토글 스타일)
         def count_lines(text):
             if not text: return 0
             return len([l for l in text.splitlines() if l.strip()])
@@ -565,16 +556,14 @@ def save_log(
         comp_count = count_lines(completed)
         tom_count  = count_lines(tomorrow)
 
-        # 2. 작성자 이름 가져오기 (캐시 활용)
         display_author = author_slack
         users_info = cache_get("users_info")
         if users_info and author_slack in users_info:
             display_author = users_info[author_slack]["name"]
 
-        # 3. 토글 제목 구성
         toggle_title = f"{log_date} {display_author} — ✅ {comp_count}건 · 🔜 {tom_count}건"
 
-        # 4. 토글 내부 블록(자식) 구성
+        # 자식 블록들 (토글 내부)
         toggle_children = []
         for header, text in [
             ("✅ 완료", completed),
@@ -584,54 +573,57 @@ def save_log(
             ("🚨 마감 리스크", risk),
         ]:
             if text:
-                # 헤더 (굵게)
+                # 헤더
                 toggle_children.append({
-                    "object": "block",
                     "type": "paragraph",
                     "paragraph": {
                         "rich_text": [{"type": "text", "text": {"content": header}, "annotations": {"bold": True}}]
                     }
                 })
-                # 상세 내용
-                toggle_children.append(_paragraph_block(text))
-                # 간격용 빈 줄
-                toggle_children.append(_paragraph_block(""))
+                # 내용
+                toggle_children.append({
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": text[:2000]}}]
+                    }
+                })
+                # 빈 줄
+                toggle_children.append({"type": "paragraph", "paragraph": {"rich_text": []}})
 
-        # 5. 최종 토글 블록 생성
-        log_blocks = [
-            {
-                "object": "block",
-                "type": "toggle",
-                "toggle": {
-                    "rich_text": [{"type": "text", "text": {"content": toggle_title}}],
-                    "children": toggle_children
+        # 최종 토글 블록 생성 함수 (항상 새로운 리스트 반환)
+        def get_log_blocks():
+            return [
+                {
+                    "object": "block",
+                    "type": "toggle",
+                    "toggle": {
+                        "rich_text": [{"type": "text", "text": {"content": toggle_title}}],
+                        "children": toggle_children
+                    }
                 }
-            }
-        ]
+            ]
 
-        # 6. 블록 추가 (일지 DB 페이지 + Task 상세 페이지)
-        if log_blocks:
-            notion_client.blocks.children.append(block_id=page["id"], children=log_blocks)
-            
-            if task_id and task_id != "NEW_TASK":
-                try:
-                    notion_client.blocks.children.append(block_id=task_id, children=log_blocks)
-                    logger.info(f"Task 페이지 히스토리 토글 추가 성공: {task_id}")
-                except Exception as te:
-                    logger.error(f"Task 페이지 히스토리 추가 실패: {te}")
+        # 3. 일지 DB 페이지 본문에 추가
+        notion_client.blocks.children.append(block_id=page["id"], children=get_log_blocks())
 
-        logger.info(f"일지 기록 프로세스 완료: {task_id}")
+        # 4. Task 상세 페이지 본문에 추가 (연결된 경우만)
+        if task_id and task_id != "NEW_TASK":
+            try:
+                notion_client.blocks.children.append(block_id=task_id, children=get_log_blocks())
+                logger.info(f"Task 페이지({task_id}) 히스토리 추가 완료")
+            except Exception as te:
+                logger.error(f"Task 페이지 히스토리 추가 실패: {te}")
 
-        # 상태 업데이트 및 담당자 지정
+        # 5. 상태 및 담당자 업데이트
         if status_update and status_update in STATUS_OPTIONS:
             update_task_status(task_id, status_update)
-        if task_id and task_id != "NEW_TASK" and author_slack:
+        if author_slack:
             update_task_assignee(task_id, author_slack)
 
         return {"id": page["id"], "url": page["url"]}
 
     except Exception as e:
-        logger.error(f"일지 기록 실패: {e}")
+        logger.error(f"일지 최종 기록 프로세스 실패: {e}")
         return None
 
 
@@ -728,21 +720,17 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
                 content = rt.get("text", {}).get("content", "")
                 lines = content.splitlines(keepends=True)
                 
-                # 매우 정교한 치환이 필요하지만 간단하게 해당 라인의 패턴 치환
-                # (현 실무 구조상 한 블록에 rich_text가 하나인 경우가 대부분임)
                 new_lines = []
                 for i, line in enumerate(lines):
                     if i == line_idx:
                         if checked:
-                            # [ ] 또는 [x] 를 [o] 로 변경
                             line = line.replace("- [ ]", "- [o]").replace("- [x]", "- [o]").replace("- [X]", "- [o]")
                         else:
-                            # [o] 나 [x] 를 [ ] 로 변경
                             line = line.replace("- [o]", "- [ ]").replace("- [x]", "- [ ]").replace("- [X]", "- [ ]")
                     new_lines.append(line)
                 
                 rt["text"]["content"] = "".join(new_lines)
-                rt.pop("plain_text", None) # 업데이트 시 plain_text는 제거
+                rt.pop("plain_text", None)
                 new_rich_text.append(rt)
                 
             notion_client.blocks.update(block_id=real_block_id, **{btype: {"rich_text": new_rich_text}})
@@ -756,7 +744,7 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
         return False
 
 
-# ── 하위 호환 별칭 (modal.py 등 기존 코드에서 append_daily_log로 호출) ──
+# ── 하위 호환 별칭 ──
 append_daily_log = save_log
 
 
