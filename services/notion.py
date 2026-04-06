@@ -573,14 +573,32 @@ def save_log(
                 blocks.append(_paragraph_block(text))
 
         if blocks:
+            # 1. 일지 DB 페이지 내부에 블록 추가
             notion_client.blocks.children.append(block_id=page["id"], children=blocks)
-            logger.info(f"일지 블록 추가 완료 (prepend): {page['id']}")
+            
+            # 2. 기존 Task 페이지 본문에도 히스토리로 블록 추가 (여기가 핵심!)
+            if task_id and task_id != "NEW_TASK":
+                # 구분선과 날짜 헤더 추가
+                history_header = [
+                    {"type": "divider", "divider": {}},
+                    {
+                        "type": "heading_2",
+                        "heading_2": {
+                            "rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} 업무일지 ({author_slack})"}}]
+                        }
+                    }
+                ]
+                try:
+                    notion_client.blocks.children.append(block_id=task_id, children=history_header + blocks)
+                    logger.info(f"Task 페이지 히스토리 추가 완료: {task_id}")
+                except Exception as te:
+                    logger.warning(f"Task 페이지 히스토리 추가 실패 (무시): {te}")
 
-        # 상태 업데이트
+        logger.info(f"일지 기록 완료: Log DB({page['id']}), Task({task_id})")
+
+        # 상태 업데이트 및 담당자 지정
         if status_update and status_update in STATUS_OPTIONS:
             update_task_status(task_id, status_update)
-
-        # 담당자 자동 지정 (미배정 Task인 경우)
         if task_id and task_id != "NEW_TASK" and author_slack:
             update_task_assignee(task_id, author_slack)
 
@@ -639,10 +657,10 @@ def get_task_todos(task_id: str) -> list[dict]:
                 elif btype in ("paragraph", "bulleted_list_item", "numbered_list_item"):
                     raw_text = "".join(rt["plain_text"]
                                        for rt in block.get(btype, {}).get("rich_text", []))
-                    for line in raw_text.splitlines():
+                    for i, line in enumerate(raw_text.splitlines()):
                         m = TODO_PATTERN.match(line)
                         if m:
-                            todos.append({"id": block["id"],
+                            todos.append({"id": f"{block['id']}::line_{i}",
                                           "text": m.group(2).strip(),
                                           "checked": m.group(1).strip().lower() == "x",
                                           "block_type": "text_pattern"})
@@ -663,8 +681,43 @@ def get_task_todos(task_id: str) -> list[dict]:
 
 
 def update_todo_checked(block_id: str, checked: bool) -> bool:
-    """To-do 블록의 체크 상태를 업데이트."""
+    """To-do 블록 또는 텍스트 패턴의 체크 상태를 업데이트."""
     try:
+        # 텍스트 패턴인 경우 (ID에 ::line_ 포함)
+        if "::line_" in block_id:
+            real_block_id, line_idx_str = block_id.split("::line_")
+            line_idx = int(line_idx_str)
+            
+            # 블록의 전체 텍스트 가져오기
+            block = notion_client.blocks.retrieve(block_id=real_block_id)
+            btype = block.get("type", "")
+            rich_texts = block.get(btype, {}).get("rich_text", [])
+            
+            # 각 라인을 돌며 해당 인덱스의 [ ]를 [x]로 변경
+            new_rich_text = []
+            for rt in rich_texts:
+                content = rt.get("text", {}).get("content", "")
+                lines = content.splitlines(keepends=True)
+                
+                # 매우 정교한 치환이 필요하지만 간단하게 해당 라인의 패턴 치환
+                # (현 실무 구조상 한 블록에 rich_text가 하나인 경우가 대부분임)
+                new_lines = []
+                for i, line in enumerate(lines):
+                    if i == line_idx:
+                        if checked:
+                            line = line.replace("- [ ]", "- [x]").replace("- [ ]", "- [x]")
+                        else:
+                            line = line.replace("- [x]", "- [ ]").replace("- [X]", "- [ ]")
+                    new_lines.append(line)
+                
+                rt["text"]["content"] = "".join(new_lines)
+                rt.pop("plain_text", None) # 업데이트 시 plain_text는 제거
+                new_rich_text.append(rt)
+                
+            notion_client.blocks.update(block_id=real_block_id, **{btype: {"rich_text": new_rich_text}})
+            return True
+            
+        # 일반 To-do 블록인 경우
         notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
         return True
     except Exception as e:
