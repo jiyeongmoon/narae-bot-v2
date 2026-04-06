@@ -87,7 +87,8 @@ def register_actions(app):
                 view=build_task_select_modal(
                     tasks, 
                     user_real_name=curr_rn, 
-                    filter_user_id=selected_user_id
+                    filter_user_id=selected_user_id,
+                    filter_user_name=filter_name
                 )
             )
         except Exception as e:

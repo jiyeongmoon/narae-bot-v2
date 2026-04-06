@@ -46,8 +46,9 @@ def _task_label(task: dict) -> str:
 def build_task_select_modal(tasks: list[dict],
                             user_real_name: str = "",
                             search_keyword: str = "",
-                            filter_user_id: str = None) -> dict:
-    """활성 Task를 [성함] / [미배정] / [담당자별] 섹션으로 분류하여 표시."""
+                            filter_user_id: str = None,
+                            filter_user_name: str = "") -> dict:
+    """활성 Task를 [담당자별] 섹션으로 분류하여 표시."""
 
     # ── 필터링: 진행 중(🚀) 및 진행 예정(🙏) 상태만 ────────────────
     ACTIVE_STATUSES = ["🚀 진행 중", "🙏 진행 예정"]
@@ -127,8 +128,9 @@ def build_task_select_modal(tasks: list[dict],
         },
     ]
 
-    # self_header (본인 이름 표시)
-    self_header = f"✅ *{user_real_name}* 님 담당 업무" if user_real_name else "✅ *내 업무*"
+    # self_header (필터링 시 해당 담당자 이름, 아니면 본인 이름)
+    header_name = filter_user_name if filter_user_id and filter_user_name else user_real_name
+    self_header = f"✅ *{header_name}* 님 담당 업무" if header_name else "✅ *내 업무*"
 
     # ── 내 업무 섹션 (제한 없음) ──────────────────────────────
     if my_tasks:
