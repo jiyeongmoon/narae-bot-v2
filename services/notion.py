@@ -70,8 +70,21 @@ def get_notion_user_id(slack_display_name: str) -> str | None:
 
 def ensure_log_db() -> str | None:
     global NOTION_LOG_DB_ID
-    if NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10: return NOTION_LOG_DB_ID
-    return None
+    if NOTION_LOG_DB_ID and "your-log-db" not in NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10:
+        return NOTION_LOG_DB_ID
+    try:
+        task_db = notion_client.databases.retrieve(database_id=NOTION_TASK_DB_ID)
+        new_db = notion_client.databases.create(
+            parent=task_db.get("parent", {}),
+            title=[{"type": "text", "text": {"content": "📋 일지 DB"}}],
+            properties=LOG_DB_PROPERTIES,
+        )
+        NOTION_LOG_DB_ID = new_db["id"]
+        logger.info(f"일지 DB 신규 생성 완료: {NOTION_LOG_DB_ID}")
+        return NOTION_LOG_DB_ID
+    except Exception as e:
+        logger.error(f"일지 DB 생성 실패: {e}")
+        return None
 
 
 def _build_active_task_filter() -> dict:
