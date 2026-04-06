@@ -352,17 +352,18 @@ def update_task_assignee_by_notion_id(page_id: str, notion_user_id: str) -> bool
         return False
 
 
-def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="", issues="", risk="", status_update="", author_slack=""):
+def save_log(task_id, task_name, log_date, completed, tomorrow,
+             consultation="", issues="", risk="", status_update="", author_slack=""):
     log_db_id = ensure_log_db()
-    if not log_db_id: 
+    if not log_db_id:
         logger.warning("일지 DB를 쓸 수 없으므로 중앙 DB 기록은 생략하고 Task 페이지에만 기록합니다.")
-        
+
     display_author = author_slack
     uinfo = cache_get("users_info")
     if uinfo and author_slack in uinfo: display_author = uinfo[author_slack]["name"]
 
     try:
-        # Flat Style Blocks
+        # 로그 엔트리 텍스트 블록
         blocks = [
             {"object": "block", "type": "divider", "divider": {}},
             {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]}}
@@ -376,7 +377,8 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
                 ]}
             })
 
-        # ── 완료/내일 예정 → To-do 블록 ───────────────────────────────────
+        # ── To-do 블록 생성 (새 Task/기존 Task 통일) ──────────────────────
+        # 완료(체크) + 내일 예정(미체크) → Task To-do 섹션의 마지막 to_do 다음에 삽입
         todo_blocks = []
         if completed:
             for line in [l.strip() for l in completed.splitlines() if l.strip()]:
@@ -399,12 +401,12 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
                 "일지내용": {"title": [{"text": {"content": f"{log_date} | {task_name}"}}]},
                 "날짜": {"date": {"start": log_date}},
             }
-            if task_id and task_id != "NEW_TASK": props["연결Task"] = {"relation": [{"id": task_id}]}
+            if task_id and not task_id.startswith("NEW_TASK"): props["연결Task"] = {"relation": [{"id": task_id}]}
             aid = get_notion_user_id(author_slack)
             if aid: props["작성자"] = {"people": [{"id": aid}]}
             for k, v in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
                 if v: props[k] = {"rich_text": [{"text": {"content": v[:2000]}}]}
-            
+
             page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
             page_id = page["id"]
             page_url = page["url"]
@@ -412,16 +414,34 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
 
         if task_id and not task_id.startswith("NEW_TASK"):
             try:
+                # 1. 로그 엔트리 텍스트 블록 추가
                 notion_client.blocks.children.append(block_id=task_id, children=blocks)
-                if todo_blocks:          # To-do 블록 추가
-                    notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
-            except Exception as e: logger.error(f"Task 상세 페이지 기록 실패: {e}")
-        
+
+                # 2. To-do 블록: 마지막 to_do 다음에 삽입 (To-do 섹션 유지)
+                if todo_blocks:
+                    try:
+                        resp = notion_client.blocks.children.list(block_id=task_id)
+                        last_todo_id = None
+                        for b in resp.get("results", []):
+                            if b.get("type") == "to_do":
+                                last_todo_id = b["id"]
+                        if last_todo_id:
+                            notion_client.blocks.children.append(
+                                block_id=task_id, children=todo_blocks, after=last_todo_id
+                            )
+                        else:
+                            notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
+                    except Exception as te:
+                        logger.warning(f"To-do 섹션 삽입 실패, 하단에 추가: {te}")
+                        notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
+            except Exception as e:
+                logger.error(f"Task 상세 페이지 기록 실패: {e}")
+
         if status_update: update_task_status(task_id, status_update)
         if author_slack: update_task_assignee(task_id, author_slack)
-        
+
         return {"id": page_id or task_id, "url": page_url or f"https://notion.so/{task_id.replace('-', '')}"}
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"일지 기록 실패: {e}")
         return None
 
