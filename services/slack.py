@@ -523,11 +523,12 @@ def build_log_step_modal(metadata_json: str, task_name: str,
 def build_success_message(task_name: str, task_url: str,
                           is_new: bool = False) -> list:
     action_text = "✅ 새 Task가 생성되고 일지가 기록" if is_new else "✅ 일지가 기록"
+    link_part = f"\n<{task_url}|📎 노션에서 확인하기>" if task_url else ""
     return [
         {
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": f"{action_text}됐습니다!\n*{task_name}*\n<{task_url}|📎 노션에서 확인하기>"}
+                     "text": f"{action_text}됐습니다!\n*{task_name}*{link_part}"}
         }
     ]
 
@@ -551,7 +552,7 @@ def build_multi_success_message(done: list[dict]) -> list:
             "type": "section",
             "text": {"type": "mrkdwn", "text": text}
         }
-    ]
+    ], text
 
 
 def build_daily_reminder_message() -> list:

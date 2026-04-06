@@ -101,16 +101,16 @@ def register_modals(app):
         new_name = None
         new_notion_assignee_id = None
         if is_new:
-            client  = get_select("block_new_task_client", "new_task_client") or ""
-            sub     = get_val("block_new_task_sub",    "new_task_sub")    or ""
-            outcome = get_val("block_new_task_name",   "new_task_name")   or ""
+            task_client = get_select("block_new_task_client", "new_task_client") or ""
+            sub         = get_val("block_new_task_sub",    "new_task_sub")    or ""
+            outcome     = get_val("block_new_task_name",   "new_task_name")   or ""
             # 발주처에서 대분류(prefix) 자동 파생
-            prefix = CLIENT_TO_PREFIX.get(client, client) if client else ""
-            if not client or not sub or not outcome:
+            prefix = CLIENT_TO_PREFIX.get(task_client, task_client) if task_client else ""
+            if not task_client or not sub or not outcome:
                 errors = {}
-                if not client:  errors["block_new_task_client"] = "발주처를 선택해 주세요."
-                if not sub:     errors["block_new_task_sub"]    = "소분류를 입력해 주세요."
-                if not outcome: errors["block_new_task_name"]   = "결과물명을 입력해 주세요."
+                if not task_client: errors["block_new_task_client"] = "발주처를 선택해 주세요."
+                if not sub:         errors["block_new_task_sub"]    = "소분류를 입력해 주세요."
+                if not outcome:     errors["block_new_task_name"]   = "결과물명을 입력해 주세요."
                 ack(response_action="errors", errors=errors)
                 return
             new_name = f"[{prefix}_{sub}] {outcome}"
@@ -305,10 +305,13 @@ def register_modals(app):
             # 마지막 단계면 완료 메시지 발송
             if next_idx >= total:
                 if len(done) == 1:
-                    blocks = build_success_message(done[0]["name"], done[0]["url"], done[0]["is_new"])
+                    msg_name = done[0]["name"]
+                    blks = build_success_message(msg_name, done[0]["url"], done[0]["is_new"])
+                    fallback = f"✅ 일지가 기록됐습니다! {msg_name}"
+                    client.chat_postMessage(channel=user_id, text=fallback, blocks=blks)
                 else:
-                    blocks = build_multi_success_message(done)
-                client.chat_postMessage(channel=user_id, blocks=blocks)
+                    blks, fallback = build_multi_success_message(done)
+                    client.chat_postMessage(channel=user_id, text=fallback, blocks=blks)
                 
                 # 진행 알림 삭제
                 if progress_msg:
