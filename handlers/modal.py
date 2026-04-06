@@ -11,11 +11,13 @@ import datetime
 import json
 
 from services.notion import (
-    append_daily_log,
+    save_log as append_daily_log,
     create_task,
     get_notion_user_id,
     get_task_todos,
     update_todo_checked,
+    update_task_status,
+    update_task_assignee,
     update_task_assignee_by_notion_id,
     CLIENT_TO_PREFIX,
 )
@@ -235,12 +237,8 @@ def register_modals(app):
             }
 
             new_status = get_select("block_status", "status_select")
-            
-            # --- 노션 모듈 임포트 ---
-            from services.notion import save_log as append_daily_log
-            
+
             if is_new:
-                from services.notion import create_task, get_notion_user_id
                 new_deadline = get_date("block_new_task_deadline", "new_task_deadline")
                 new_client   = get_select("block_new_task_client", "new_task_client")
                 new_phase    = get_select("block_new_task_phase",  "new_task_phase")
@@ -271,7 +269,6 @@ def register_modals(app):
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]
             else:
-                from services.notion import update_task_status, update_todo_checked
                 # 1. 상태/담당자 업데이트 (Notion User ID 직접 사용)
                 if new_status: update_task_status(task_id, new_status)
                 if selected_assignee_id:
@@ -280,7 +277,6 @@ def register_modals(app):
                         update_task_assignee_by_notion_id(task_id, notion_uid)
                     else:
                         # fallback: 이름 기반 매칭 시도
-                        from services.notion import update_task_assignee
                         update_task_assignee(task_id, target_name)
                 
                 # 2. To-do 체크 처리
