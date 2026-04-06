@@ -117,7 +117,7 @@ def build_task_select_modal(tasks: list[dict],
             "block_id": "block_search",
             "dispatch_action": True,
             "optional": True,
-            "label": {"type": "plain_text", "text": "🔍 키워드 검색 (Enter)"},
+            "label": {"type": "plain_text", "text": "🔍 키워드 검색 (Enter) (옵션)"},
             "element": {
                 "type": "plain_text_input",
                 "action_id": "search_keyword",
@@ -125,6 +125,21 @@ def build_task_select_modal(tasks: list[dict],
                 "dispatch_action_config": {
                     "trigger_actions_on": ["on_enter_pressed"]
                 },
+            }
+        },
+        # ── 새 Task 생성 (최상단으로 이동) ───────────────────────
+        {"type": "divider"},
+        {
+            "type": "input",
+            "block_id": "block_new_task_select",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "새 Task (선택 사항)"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "new_task_checkboxes",
+                "options": [
+                    {"text": {"type": "plain_text", "text": "➕ 새 Task 생성"}, "value": "NEW_TASK"}
+                ],
             }
         },
     ]
@@ -197,21 +212,7 @@ def build_task_select_modal(tasks: list[dict],
             "text": {"type": "mrkdwn", "text": "검색 결과가 없습니다."},
         })
 
-    # ── 새 Task 생성 ──────────────────────────────────────────
-    blocks.append({"type": "divider"})
-    blocks.append({
-        "type": "input",
-        "block_id": "block_new_task_select",
-        "optional": True,
-        "label": {"type": "plain_text", "text": "새 Task"},
-        "element": {
-            "type": "checkboxes",
-            "action_id": "new_task_checkboxes",
-            "options": [
-                {"text": {"type": "plain_text", "text": "➕ 새 Task 생성"}, "value": "NEW_TASK"}
-            ],
-        }
-    })
+    # (새 Task 블록은 이미 위에서 검색 블록 바로 뒤에 추가됨)
 
     return {
         "type": "modal",
@@ -251,11 +252,12 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                 "type": "input",
                 "block_id": "block_new_task_name",
                 "label": {"type": "plain_text", "text": "업무명 *"},
+                "hint": {"type": "plain_text", "text": "규칙: [대분류_소분류] 핵심성과물  예) [무주_재생사업] 주간 실적 보고서"},
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "new_task_name",
                     "placeholder": {"type": "plain_text",
-                                    "text": "예: 무주 연차별 실행예산 조정"},
+                                    "text": "[발주처_소분류] 결과물명  예: [진천_도시재생] 컨설팅 일정 확정"},
                 }
             },
             {
