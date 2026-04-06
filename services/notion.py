@@ -270,24 +270,14 @@ def update_task_assignee(page_id: str, slack_display_name: str) -> bool:
 
 def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="", issues="", risk="", status_update="", author_slack=""):
     log_db_id = ensure_log_db()
-    if not log_db_id: return None
+    if not log_db_id: 
+        logger.warning("일지 DB를 쓸 수 없으므로 중앙 DB 기록은 생략하고 Task 페이지에만 기록합니다.")
+        
     display_author = author_slack
     uinfo = cache_get("users_info")
     if uinfo and author_slack in uinfo: display_author = uinfo[author_slack]["name"]
 
     try:
-        props = {
-            "일지내용": {"title": [{"text": {"content": f"{log_date} | {task_name}"}}]},
-            "날짜": {"date": {"start": log_date}},
-        }
-        if task_id and task_id != "NEW_TASK": props["연결Task"] = {"relation": [{"id": task_id}]}
-        aid = get_notion_user_id(author_slack)
-        if aid: props["작성자"] = {"people": [{"id": aid}]}
-        for k, v in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
-            if v: props[k] = {"rich_text": [{"text": {"content": v[:2000]}}]}
-        
-        page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
-
         # Flat Style Blocks
         blocks = [
             {"object": "block", "type": "divider", "divider": {}},
@@ -296,15 +286,36 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
         for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
             if t: blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"{h}\n", "annotations": {"bold": True}}}, {"type": "text", "text": {"content": t[:2000]}}]}})
 
-        notion_client.blocks.children.append(block_id=page["id"], children=blocks)
+        page_id = None
+        page_url = None
+
+        if log_db_id:
+            props = {
+                "일지내용": {"title": [{"text": {"content": f"{log_date} | {task_name}"}}]},
+                "날짜": {"date": {"start": log_date}},
+            }
+            if task_id and task_id != "NEW_TASK": props["연결Task"] = {"relation": [{"id": task_id}]}
+            aid = get_notion_user_id(author_slack)
+            if aid: props["작성자"] = {"people": [{"id": aid}]}
+            for k, v in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
+                if v: props[k] = {"rich_text": [{"text": {"content": v[:2000]}}]}
+            
+            page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
+            page_id = page["id"]
+            page_url = page["url"]
+            notion_client.blocks.children.append(block_id=page_id, children=blocks)
+
         if task_id and task_id != "NEW_TASK":
             try: notion_client.blocks.children.append(block_id=task_id, children=blocks)
-            except Exception: pass
+            except Exception as e: logger.error(f"Task 상세 페이지 기록 실패: {e}")
         
         if status_update: update_task_status(task_id, status_update)
         if author_slack: update_task_assignee(task_id, author_slack)
-        return {"id": page["id"], "url": page["url"]}
-    except Exception: return None
+        
+        return {"id": page_id or task_id, "url": page_url or f"https://notion.so/{task_id.replace('-', '')}"}
+    except Exception as e: 
+        logger.error(f"일지 기록 실패: {e}")
+        return None
 
 append_daily_log = save_log
 
