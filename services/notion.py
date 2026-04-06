@@ -162,6 +162,49 @@ def get_weekly_updated_tasks() -> list[dict]:
         return [_parse_task(p) for p in response["results"]]
     except Exception: return []
 
+def create_task(task_name: str, assignee_notion_id: str = None,
+                deadline: str = None, client_name: str = None,
+                phase: str = None) -> dict | None:
+    properties = {
+        PROP["title"]: {
+            "title": [{"text": {"content": task_name}}]
+        },
+        PROP["status"]: {
+            "status": {"name": "🙏 진행 예정"}
+        },
+    }
+
+    if assignee_notion_id:
+        properties[PROP["assignee"]] = {
+            "people": [{"id": assignee_notion_id}]
+        }
+    if deadline:
+        properties[PROP["deadline"]] = {
+            "date": {"start": deadline}
+        }
+    if client_name:
+        properties[PROP["client"]] = {
+            "select": {"name": client_name}
+        }
+    if phase:
+        properties[PROP["phase"]] = {
+            "select": {"name": phase}
+        }
+
+    try:
+        page = notion_client.pages.create(
+            parent={"database_id": NOTION_TASK_DB_ID},
+            properties=properties,
+        )
+        title_list = page["properties"][PROP["title"]]["title"]
+        name = title_list[0]["plain_text"] if title_list else task_name
+        logger.info(f"새 Task 생성: {name}")
+        return {"id": page["id"], "name": name, "url": page["url"]}
+
+    except Exception as e:
+        logger.error(f"Task 생성 실패: {e}")
+        return None
+
 def update_task_status(page_id: str, status_name: str) -> bool:
     try:
         notion_client.pages.update(page_id=page_id, properties={PROP["status"]: {"status": {"name": status_name}}})
