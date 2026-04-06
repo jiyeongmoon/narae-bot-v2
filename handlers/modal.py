@@ -146,16 +146,21 @@ def register_modals(app):
                 except Exception:
                     next_todos = []
 
-            modal = build_log_step_modal(
-                metadata_json=metadata_json,
-                task_name=next_task["name"],
-                step=next_idx + 1,
-                total=total,
-                is_new=next_is_new,
-                current_status=next_task.get("status"),
-                todos=next_todos,
-            )
-            ack(response_action="update", view=modal)
+            try:
+                modal = build_log_step_modal(
+                    metadata_json=metadata_json,
+                    task_name=next_task["name"],
+                    step=next_idx + 1,
+                    total=total,
+                    user_id=user_id,        # ← 필수: 담당자 블록 구성에 필요
+                    is_new=next_is_new,
+                    current_status=next_task.get("status"),
+                    todos=next_todos,
+                )
+                ack(response_action="update", view=modal)
+            except Exception as modal_err:
+                logger.error(f"다음 스텝 모달 빌드 실패: {modal_err}", exc_info=True)
+                ack()   # 모달 닫기로 fallback
         else:
             ack(response_action="clear")
 
