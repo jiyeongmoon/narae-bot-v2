@@ -297,7 +297,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
         {
             "type": "input",
             "block_id": "block_assignee",
-            "label": {"type": "plain_text", "text": "👤 담당자 지정 (확실하게!)"},
+            "label": {"type": "plain_text", "text": "👤 담당자 지정"},
             "hint": {"type": "plain_text", "text": "본인 또는 해당 업무의 담당자를 선택해 주세요."},
             "element": {
                 "type": "users_select",
@@ -328,8 +328,8 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {
                 "type": "input",
                 "block_id": "block_status",
-                "label": {"type": "plain_text", "text": "🏃 진행 상황 변경 (선택)"},
-                "optional": True,
+                "label": {"type": "plain_text", "text": "🏃 진행 상황 변경"},
+                "optional": False,
                 "element": {
                     "type": "static_select",
                     "action_id": "status_select",
