@@ -520,64 +520,114 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
 
 
 def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) -> bool:
-    """- [ ] 텍스트 형식 to-do를 실제 Notion to_do 블록으로 교체합니다.
+    """- [ ] 텍스트 형식 to-do를 실제 Notion to_do 블록으로 교체합니다. (Make & 나래봇 공용)
     
-    - 체크된 항목 : 텍스트 블록에서 제거 (이미 '오늘 완료' 로그에 반영됨)
-    - 미체크 항목 : 텍스트 블록 제거 후 실제 to_do 블록으로 삽입
+    1. 원본 블록 내 할 일 텍스트 외의 내용(예: 'To-do :' 헤더)이 있으면 해당 텍스트만 업데이트하여 보존합니다.
+    2. 할 일 목록 전체가 한 블록이면 블록을 삭제합니다.
+    3. 미체크된 항목은 실제 Notion to_do 블록으로 변환하여 적절한 위치(To-do 섹션 내)에 삽입합니다.
     """
     text_pattern_todos = [t for t in all_todos if t.get("block_type") == "text_pattern"]
     if not text_pattern_todos:
         return True
 
     try:
-        # 1. 미체크 항목만 to_do 블록으로 변환할 텍스트 수집
-        unchecked_texts = [
-            t["text"] for t in text_pattern_todos
-            if t["id"] not in checked_ids
-        ]
+        # 1. 미체크 항목 텍스트 수집 (나중에 실제 블록으로 변환)
+        unchecked_texts = [t["text"] for t in text_pattern_todos if t["id"] not in checked_ids]
 
-        # 2. 원본 텍스트 블록 삭제 (중복 parent block은 한 번만)
-        parent_block_ids = list({t["id"].split("::")[0] for t in text_pattern_todos})
-        for bid in parent_block_ids:
+        # 2. 원본 텍스트 블록 처리 (전체 삭제 또는 부분 업데이트)
+        block_groups = {}
+        for t in text_pattern_todos:
+            bid = t["id"].split("::")[0]
+            if bid not in block_groups: block_groups[bid] = []
+            block_groups[bid].append(t)
+
+        for bid, items in block_groups.items():
             try:
-                notion_client.blocks.delete(block_id=bid)
-            except Exception as de:
-                logger.warning(f"텍스트 블록 삭제 실패 ({bid}): {de}")
+                b = notion_client.blocks.retrieve(block_id=bid)
+                bt = b.get("type", "")
+                rts = b.get(bt, {}).get("rich_text", [])
+                
+                full_txt = "".join(rt.get("plain_text", "") for rt in rts)
+                lines = full_txt.splitlines(keepends=True)
+                
+                # 할 일 라인이 아닌 '남겨야 할 텍스트(예: 헤더)'만 필터링
+                remaining_lines = []
+                for i, ln in enumerate(lines):
+                    is_todo_line = any(f"{bid}::line_{i}" == it["id"] for it in items)
+                    # 할 일 패턴이 아니고 빈 줄이 아니면 남겨둠
+                    if not is_todo_line and ln.strip(): 
+                        remaining_lines.append(ln)
+                
+                if not remaining_lines:
+                    notion_client.blocks.delete(block_id=bid)
+                else:
+                    new_txt = "".join(remaining_lines).strip()
+                    new_rts = [{"type": "text", "text": {"content": new_txt}}]
+                    notion_client.blocks.update(block_id=bid, **{bt: {"rich_text": new_rts}})
+            except Exception as e:
+                logger.warning(f"원본 블록({bid}) 처리 실패: {e}")
 
-        # 3. 미체크 항목을 실제 to_do 블록으로 삽입
+        # 3. 최적의 삽입 위치 탐색 (To-do 섹션 찾기)
         if unchecked_texts:
             new_todo_blocks = [
                 {
-                    "object": "block", "type": "to_do",
+                    "object": "block", "type": "to_do", 
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": t}}], "checked": False}
                 }
                 for t in unchecked_texts
             ]
-            # Task 페이지의 마지막 to_do 블록 이후 삽입 (To-do 섹션 유지)
-            resp = notion_client.blocks.children.list(block_id=task_id)
-            last_todo_id = None
-            # "To-do :" 헤더 paragraph도 찾아서 fallback으로 활용
-            todo_header_id = None
-            for b in resp.get("results", []):
-                bt = b.get("type", "")
-                if bt == "to_do":
-                    last_todo_id = b["id"]
-                elif bt == "paragraph":
-                    txt = "".join(rt.get("plain_text", "") for rt in b["paragraph"].get("rich_text", []))
-                    if "To-do" in txt:
-                        todo_header_id = b["id"]
+            
+            # 페이지 전체를 훑으며 'To-do' 앵커 찾기 (재귀 탐색)
+            insert_point = {"parent_id": task_id, "after_id": None}
+            
+            def _scan(bid):
+                try:
+                    res = notion_client.blocks.children.list(block_id=bid)
+                    l_todo = None
+                    t_head = None
+                    for b in res.get("results", []):
+                        if b["id"] == bid: continue # 무한 루프 방지
+                        bt = b.get("type", "")
+                        
+                        # 1순위: 가장 마지막에 있는 실제 to_do 블록
+                        if bt == "to_do": 
+                            l_todo = b["id"]
+                        # 2순위: "To-do" 텍스트가 포함된 모든 블록 형식 대응
+                        elif bt in ("paragraph", "bulleted_list_item", "heading_1", "heading_2", "heading_3", "callout"):
+                            props = b.get(bt, {})
+                            txt = "".join(rt.get("plain_text", "") for rt in props.get("rich_text", []))
+                            if "To-do" in txt: 
+                                t_head = b["id"]
+                                # 헤더 바로 아래에 자식으로 넣어야 할지 결정하기 위해 더 깊이 탐색
+                                if b.get("has_children"):
+                                    _scan(b["id"])
+                                    if insert_point["after_id"]: return
+                        
+                        # 하위 자식이 있으면 탐색 (Make Task 구조 대응)
+                        if b.get("has_children") and not t_head:
+                            _scan(b["id"])
+                            if insert_point["after_id"]: return
+                    
+                    if l_todo or t_head:
+                        insert_point["parent_id"] = bid
+                        insert_point["after_id"] = l_todo or t_head
+                except: pass
 
-            after_id = last_todo_id or todo_header_id
-            if after_id:
+            _scan(task_id)
+            
+            # 최종 삽입 (after_id가 없으면 맨 아래에 추가)
+            if insert_point["after_id"]:
                 notion_client.blocks.children.append(
-                    block_id=task_id, children=new_todo_blocks, after=after_id
+                    block_id=insert_point["parent_id"], 
+                    children=new_todo_blocks, 
+                    after=insert_point["after_id"]
                 )
             else:
                 notion_client.blocks.children.append(block_id=task_id, children=new_todo_blocks)
 
         return True
     except Exception as e:
-        logger.error(f"text_pattern to_do 변환 실패: {e}")
+        logger.error(f"To-do 변환 실패: {e}")
         return False
 
 
