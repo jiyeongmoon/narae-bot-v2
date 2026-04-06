@@ -42,6 +42,30 @@ EXCLUDE_STATUS  = ["✅ 완료", "⏭ 보류"]
 STATUS_OPTIONS  = ["🙏 진행 예정", "🚀 진행 중", "💡 피드백", "⏭ 보류", "✅ 완료"]
 DEADLINE_CUTOFF_DAYS = 7
 
+LOG_DB_PROPERTIES = {
+    "일지내용": {"title": {}},
+    "날짜":     {"date": {}},
+    "작성자":   {"people": {}},
+    "연결Task": {"relation": {
+        "database_id": NOTION_TASK_DB_ID,
+        "type": "single_property",
+        "single_property": {},
+    }},
+    "카테고리": {"multi_select": {
+        "options": [
+            {"name": "완료",   "color": "green"},
+            {"name": "예정",   "color": "blue"},
+            {"name": "협의",   "color": "yellow"},
+            {"name": "이슈",   "color": "orange"},
+            {"name": "리스크", "color": "red"},
+        ]
+    }},
+    "완료":     {"rich_text": {}},
+    "내일예정": {"rich_text": {}},
+    "협의사항": {"rich_text": {}},
+    "이슈":     {"rich_text": {}},
+    "리스크":   {"rich_text": {}},
+}
 
 def ensure_db_properties():
     try:
