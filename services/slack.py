@@ -6,7 +6,7 @@ services/slack.py — 슬랙 모달·메시지 블록 빌더
 import datetime
 import json
 
-from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS
+from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS, CLIENT_TO_PREFIX
 
 
 # ════════════════════════════════════════════════════════════
@@ -247,35 +247,22 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {"text": {"type": "plain_text", "text": p}, "value": p}
             for p in PHASE_OPTIONS
         ]
-        PREFIX_OPTIONS = [
-            {"text": {"type": "plain_text", "text": "진천"}, "value": "진천"},
-            {"text": {"type": "plain_text", "text": "무주"}, "value": "무주"},
-            {"text": {"type": "plain_text", "text": "청주"}, "value": "청주"},
-            {"text": {"type": "plain_text", "text": "괴산"}, "value": "괴산"},
-            {"text": {"type": "plain_text", "text": "음성"}, "value": "음성"},
-            {"text": {"type": "plain_text", "text": "내부"}, "value": "내부"},
-            {"text": {"type": "plain_text", "text": "기타"}, "value": "기타"},
-        ]
         new_task_status_options = [
             {"text": {"type": "plain_text", "text": s}, "value": s}
             for s in STATUS_OPTIONS
         ]
         new_task_blocks = [
-            # ─ 업무명 안내 텍스트
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "📌 *업무명 규칙*: `[대분류_소분류]` + 결과물명\n예) `[진천_도시재생] 컨설팅 일정 확정`  `[내부_경영지원] 2월 지출결의서 취합`"},
-            },
-            # ─ 대분류 (발주처)
+            # ─ 발주처 (대분류 자동 파생 소스)
             {
                 "type": "input",
-                "block_id": "block_new_task_prefix",
-                "label": {"type": "plain_text", "text": "① 대분류 (발주처/조직) *"},
+                "block_id": "block_new_task_client",
+                "label": {"type": "plain_text", "text": "① 발주처 *"},
+                "hint": {"type": "plain_text", "text": "선택 시 업무명 앞 태그([발주처_소분류])의 대분류가 자동 설정됩니다."},
                 "element": {
                     "type": "static_select",
-                    "action_id": "new_task_prefix",
-                    "placeholder": {"type": "plain_text", "text": "예: 진천, 무주, 내부"},
-                    "options": PREFIX_OPTIONS,
+                    "action_id": "new_task_client",
+                    "placeholder": {"type": "plain_text", "text": "발주처 선택"},
+                    "options": client_options,
                 }
             },
             # ─ 소분류
@@ -295,7 +282,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                 "type": "input",
                 "block_id": "block_new_task_name",
                 "label": {"type": "plain_text", "text": "③ 결과물명 *"},
-                "hint": {"type": "plain_text", "text": "15자 이내 명사형으로 간결하게 작성"},
+                "hint": {"type": "plain_text", "text": "15자 이내 명사형"},
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "new_task_name",
@@ -312,19 +299,6 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "type": "datepicker",
                     "action_id": "new_task_deadline",
                     "placeholder": {"type": "plain_text", "text": "마감일 선택"},
-                }
-            },
-            # ─ 발주처 (노션 필드용)
-            {
-                "type": "input",
-                "block_id": "block_new_task_client",
-                "optional": True,
-                "label": {"type": "plain_text", "text": "발주처 (선택)"},
-                "element": {
-                    "type": "static_select",
-                    "action_id": "new_task_client",
-                    "placeholder": {"type": "plain_text", "text": "발주처 선택"},
-                    "options": client_options,
                 }
             },
             # ─ 현재단계

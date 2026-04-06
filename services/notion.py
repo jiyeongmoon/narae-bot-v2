@@ -35,7 +35,23 @@ PROP_USER = {
     "person": "사람",
 }
 
-CLIENT_OPTIONS = ["청주시청", "괴산군청", "무주군청", "진천군청", "음성군청", "농어촌공사", "행정안전부", "나래공간", "기타"]
+CLIENT_OPTIONS = [
+    "청주시청", "괴산군청", "무주군청", "진천군청", "음성군청",
+    "이천시청", "충주시청", "천안시청", "세종시청", "아산시청",
+    "연기군청", "단양군청", "보은군청", "옥천군청", "영동군청",
+    "농어촌공사", "행정안전부", "국토교통부", "나래공간", "기타"
+]
+
+# 발주처 → 대분류(지역명) 자동 매핑
+CLIENT_TO_PREFIX = {
+    "청주시청": "청주", "괴산군청": "괴산", "무주군청": "무주",
+    "진천군청": "진천", "음성군청": "음성", "이천시청": "이천",
+    "충주시청": "충주", "천안시청": "천안", "세종시청": "세종",
+    "아산시청": "아산", "연기군청": "연기", "단양군청": "단양",
+    "보은군청": "보은", "옥천군청": "옥천", "영동군청": "영동",
+    "농어촌공사": "농공", "행정안전부": "행안부",
+    "국토교통부": "국토부", "나래공간": "내부", "기타": "기타",
+}
 PHASE_OPTIONS  = ["제안·입찰", "착수", "중간보고", "최종납품"]
 
 EXCLUDE_STATUS  = ["✅ 완료", "⏭ 보류"]
@@ -85,10 +101,36 @@ def ensure_db_properties():
 
 
 def get_notion_user_id(slack_display_name: str) -> str | None:
+    """Slack 실명 → Notion User ID.
+    1순위: 노션 Users API 직접 조회 (DB 설정 불필요)
+    2순위: custom User DB 조회 (fallback)
+    """
     if not slack_display_name: return None
+    name_lower = slack_display_name.strip().lower()
+    cache_key = f"notion_uid:{name_lower}"
+    cached = cache_get(cache_key)
+    if cached: return cached
+
+    # 1° Notion Users API
+    try:
+        users = notion_client.users.list()
+        for user in users.get("results", []):
+            if user.get("type") == "person":
+                notion_name = user.get("name", "").lower()
+                if notion_name and (name_lower in notion_name or notion_name in name_lower):
+                    uid = user["id"]
+                    cache_set(cache_key, uid, ttl=600)
+                    logger.info(f"Notion Users API 매칭: {slack_display_name} → {uid}")
+                    return uid
+    except Exception as e:
+        logger.warning(f"Notion Users API 조회 실패, DB fallback 시도: {e}")
+
+    # 2° custom User DB fallback
     try:
         user_info = _get_user_info_from_db(slack_display_name.strip())
-        return user_info.get("person_id")
+        uid = user_info.get("person_id")
+        if uid: cache_set(cache_key, uid, ttl=600)
+        return uid
     except Exception: return None
 
 

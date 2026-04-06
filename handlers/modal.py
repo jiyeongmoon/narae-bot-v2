@@ -17,6 +17,7 @@ from services.notion import (
     get_task_todos,
     update_todo_checked,
     update_task_assignee_by_notion_id,
+    CLIENT_TO_PREFIX,
 )
 from services.slack import (
     build_log_step_modal,
@@ -100,12 +101,14 @@ def register_modals(app):
         new_name = None
         new_notion_assignee_id = None
         if is_new:
-            prefix  = get_select("block_new_task_prefix", "new_task_prefix") or ""
+            client  = get_select("block_new_task_client", "new_task_client") or ""
             sub     = get_val("block_new_task_sub",    "new_task_sub")    or ""
             outcome = get_val("block_new_task_name",   "new_task_name")   or ""
-            if not prefix or not sub or not outcome:
+            # 발주처에서 대분류(prefix) 자동 파생
+            prefix = CLIENT_TO_PREFIX.get(client, client) if client else ""
+            if not client or not sub or not outcome:
                 errors = {}
-                if not prefix:  errors["block_new_task_prefix"] = "대분류를 선택해 주세요."
+                if not client:  errors["block_new_task_client"] = "발주처를 선택해 주세요."
                 if not sub:     errors["block_new_task_sub"]    = "소분류를 입력해 주세요."
                 if not outcome: errors["block_new_task_name"]   = "결과물명을 입력해 주세요."
                 ack(response_action="errors", errors=errors)
