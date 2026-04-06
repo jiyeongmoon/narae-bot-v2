@@ -6,7 +6,7 @@ services/slack.py — 슬랙 모달·메시지 블록 빌더
 import datetime
 import json
 
-from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS, CLIENT_TO_PREFIX
+from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS, CLIENT_TO_PREFIX, get_client_options_from_notion
 
 
 # ════════════════════════════════════════════════════════════
@@ -241,9 +241,11 @@ def build_log_step_modal(metadata_json: str, task_name: str,
 
     new_task_blocks = []
     if is_new:
+        # Notion DB에서 발주처 옵션 실시간 로드 (실패 시 하드코딩 폴백)
+        notion_client_opts = get_client_options_from_notion()
         client_options = [
             {"text": {"type": "plain_text", "text": c}, "value": c}
-            for c in CLIENT_OPTIONS
+            for c in notion_client_opts
         ]
         phase_options = [
             {"text": {"type": "plain_text", "text": p}, "value": p}
@@ -254,17 +256,30 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             for s in STATUS_OPTIONS
         ]
         new_task_blocks = [
-            # ─ 발주처 (대분류 자동 파생 소스)
+            # ─ 발주처: DB 목록에서 선택 또는 직접 입력
             {
                 "type": "input",
                 "block_id": "block_new_task_client",
-                "label": {"type": "plain_text", "text": "① 발주처 *"},
-                "hint": {"type": "plain_text", "text": "선택 시 업무명 앞 태그([발주처_소분류])의 대분류가 자동 설정됩니다."},
+                "optional": True,
+                "label": {"type": "plain_text", "text": "① 발주처 (목록 선택)"},
+                "hint": {"type": "plain_text", "text": "목록에 없으면 아래 '직접 입력'란을 사용하세요."},
                 "element": {
                     "type": "static_select",
                     "action_id": "new_task_client",
                     "placeholder": {"type": "plain_text", "text": "발주처 선택"},
                     "options": client_options,
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "block_new_task_client_text",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "① 발주처 (직접 입력, 우선 적용)"},
+                "hint": {"type": "plain_text", "text": "입력 시 위 선택보다 우선 적용됩니다. 한글 검색어 그대로 입력하세요."},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "new_task_client_text",
+                    "placeholder": {"type": "plain_text", "text": "예: 청주시청, 한국농어촌공사"},
                 }
             },
             # ─ 소분류
@@ -443,7 +458,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {
                 "type": "input",
                 "block_id": f"block_completed_{step}",
-                "optional": has_todos,  # Todo 있으면 선택, 없으면 필수
+                "optional": True,
                 "label": {"type": "plain_text", "text": "✅ 오늘 완료"},
                 "hint": {"type": "plain_text",
                          "text": "완료된 업무를 간단히 적어주세요."},
@@ -458,7 +473,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
             {
                 "type": "input",
                 "block_id": f"block_tomorrow_{step}",
-                "optional": has_todos,
+                "optional": True,
                 "label": {"type": "plain_text", "text": "🔜 내일 예정"},
                 "hint": {"type": "plain_text",
                          "text": "내일 진행할 업무나 이어서 할 작업을 적어주세요."},

@@ -16,6 +16,7 @@ from services.notion import (
     get_notion_user_id,
     get_task_todos,
     update_todo_checked,
+    replace_text_pattern_todos,
     update_task_status,
     update_task_assignee,
     update_task_assignee_by_notion_id,
@@ -204,7 +205,6 @@ def register_modals(app):
             manual_tomorrow  = get_val(f"block_tomorrow_{s}",  f"tomorrow_{s}")
 
             auto_completed_lines = []
-            auto_tomorrow_lines  = []
 
             if not is_new and checked_todo_ids is not None:
                 try:
@@ -212,19 +212,18 @@ def register_modals(app):
                     for todo in all_todos:
                         if todo["id"] in checked_todo_ids:
                             auto_completed_lines.append(f"• {todo['text']}")
-                        else:
-                            auto_tomorrow_lines.append(f"• {todo['text']}")
+                        # ★ 미체크 항목은 combined_tomorrow에 넣지 않음
+                        #   → replace_text_pattern_todos()가 To-do 섹션에 실제 to_do 블록으로 삽입
                 except Exception as e:
                     logger.warning(f"To-do 재조회 실패: {e}")
 
+            # 오늘 완료: 체크된 항목(auto) + 수동 입력(manual) 병합
             combined_completed = "\n".join(filter(None, [
                 ("\n".join(auto_completed_lines)) if auto_completed_lines else "",
                 manual_completed
             ]))
-            combined_tomorrow = "\n".join(filter(None, [
-                ("\n".join(auto_tomorrow_lines)) if auto_tomorrow_lines else "",
-                manual_tomorrow
-            ]))
+            # 내일 예정: 수동 입력만 (미체크 항목은 to_do 블록으로 직접 삽입)
+            combined_tomorrow = manual_tomorrow
 
             log_date = get_date(f"block_log_date_{s}", f"log_date_{s}")
             log = {
@@ -241,7 +240,10 @@ def register_modals(app):
 
             if is_new:
                 new_deadline = get_date("block_new_task_deadline", "new_task_deadline")
-                new_client   = get_select("block_new_task_client", "new_task_client")
+                # 발주처: 직접입력이 있으면 우선, 없으면 목록 선택값
+                new_client_text   = get_val("block_new_task_client_text", "new_task_client_text")
+                new_client_select = get_select("block_new_task_client",   "new_task_client")
+                new_client        = (new_client_text or new_client_select or "").strip() or None
                 new_phase    = get_select("block_new_task_phase",  "new_task_phase")
                 new_initial_status = get_select("block_new_task_status", "new_task_status") or "🙏 진행 예정"
 
@@ -282,15 +284,23 @@ def register_modals(app):
                         # fallback: 이름 기반 매칭 시도
                         update_task_assignee(task_id, target_name)
                 
-                # 2. To-do 체크 처리
-                if checked_todo_ids:
+                # 2. To-do 처리 (기존 Task만, 새 Task는 생략)
+                if not is_new:
                     try:
-                        all_todos = get_task_todos(task_id)
-                        for todo in all_todos:
-                            if todo["id"] in checked_todo_ids and not todo.get("checked"):
+                        all_todos_now = get_task_todos(task_id)
+                        c_ids = checked_todo_ids or set()
+
+                        # 2-a. 진짜 Notion to_do 블록: 체크된 것만 checked=True 업데이트
+                        for todo in all_todos_now:
+                            if todo["block_type"] == "to_do" and todo["id"] in c_ids and not todo.get("checked"):
                                 update_todo_checked(todo["id"], True)
+
+                        # 2-b. text_pattern(- [ ] 텍스트) 블록 전체를 실제 to_do 블록으로 교체
+                        #      - 체크된 항목: 텍스트 블록 삭제 (이미 '오늘 완료' 로그에 반영)
+                        #      - 미체크 항목: 텍스트 블록 삭제 → 새 to_do 블록 삽입
+                        replace_text_pattern_todos(task_id, all_todos_now, c_ids)
                     except Exception as te:
-                        logger.warning(f"To-do 체크 업데이트 무시됨: {te}")
+                        logger.warning(f"To-do 업데이트 무시됨: {te}")
 
                 # 3. 일지 기록
                 append_daily_log(

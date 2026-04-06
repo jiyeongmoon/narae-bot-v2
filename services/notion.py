@@ -36,10 +36,8 @@ PROP_USER = {
 }
 
 CLIENT_OPTIONS = [
-    "청주시청", "괴산군청", "무주군청", "진천군청", "음성군청",
-    "이천시청", "충주시청", "천안시청", "세종시청", "아산시청",
-    "연기군청", "단양군청", "보은군청", "옥천군청", "영동군청",
-    "농어촌공사", "행정안전부", "국토교통부", "나래공간", "기타"
+    "청주시청", "괴산군청", "무주군청", "농어촌공사", "나래공간",
+    "이천시청", "한국농어촌공사", "무주읍주민협의체", "진천군청", "미정", "기타",
 ]
 
 # 발주처 → 대분류(지역명) 자동 매핑
@@ -49,11 +47,33 @@ CLIENT_TO_PREFIX = {
     "충주시청": "충주", "천안시청": "천안", "세종시청": "세종",
     "아산시청": "아산", "연기군청": "연기", "단양군청": "단양",
     "보은군청": "보은", "옥천군청": "옥천", "영동군청": "영동",
-    "농어촌공사": "농공", "행정안전부": "행안부",
-    "국토교통부": "국토부", "나래공간": "내부", "기타": "기타",
+    "농어촌공사": "농공", "한국농어촌공사": "농공",
+    "무주읍주민협의체": "무주읍", "행정안전부": "행안부",
+    "국토교통부": "국토부", "나래공간": "내부", "미정": "미정", "기타": "기타",
 }
-PHASE_OPTIONS  = ["제안·입찰", "착수", "중간보고", "최종납품"]
 
+def get_client_options_from_notion() -> list[str]:
+    """Notion Task DB의 발주처(Client) select 속성에서 실제 옵션 목록을 가져옵니다.
+    실패 시 하드코딩된 CLIENT_OPTIONS를 반환합니다."""
+    try:
+        from config import NOTION_TASK_DB_ID
+        db = notion_client.databases.retrieve(database_id=NOTION_TASK_DB_ID)
+        props = db.get("properties", {})
+        client_prop = props.get("발주처") or props.get("Client") or {}
+        prop_type = client_prop.get("type", "")
+        if prop_type == "select":
+            opts = [o["name"] for o in client_prop.get("select", {}).get("options", [])]
+        elif prop_type == "multi_select":
+            opts = [o["name"] for o in client_prop.get("multi_select", {}).get("options", [])]
+        else:
+            opts = []
+        return opts if opts else CLIENT_OPTIONS
+    except Exception as e:
+        logger.warning(f"Notion 발주처 옵션 로드 실패, 기본값 사용: {e}")
+        return CLIENT_OPTIONS
+
+
+PHASE_OPTIONS   = ["제안·입찰", "착수", "중간보고", "최종납품"]
 EXCLUDE_STATUS  = ["✅ 완료", "⏭ 보류"]
 STATUS_OPTIONS  = ["🙏 진행 예정", "🚀 진행 중", "💡 피드백", "⏭ 보류", "✅ 완료"]
 DEADLINE_CUTOFF_DAYS = 7
@@ -497,6 +517,69 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
         notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
         return True
     except Exception: return False
+
+
+def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) -> bool:
+    """- [ ] 텍스트 형식 to-do를 실제 Notion to_do 블록으로 교체합니다.
+    
+    - 체크된 항목 : 텍스트 블록에서 제거 (이미 '오늘 완료' 로그에 반영됨)
+    - 미체크 항목 : 텍스트 블록 제거 후 실제 to_do 블록으로 삽입
+    """
+    text_pattern_todos = [t for t in all_todos if t.get("block_type") == "text_pattern"]
+    if not text_pattern_todos:
+        return True
+
+    try:
+        # 1. 미체크 항목만 to_do 블록으로 변환할 텍스트 수집
+        unchecked_texts = [
+            t["text"] for t in text_pattern_todos
+            if t["id"] not in checked_ids
+        ]
+
+        # 2. 원본 텍스트 블록 삭제 (중복 parent block은 한 번만)
+        parent_block_ids = list({t["id"].split("::")[0] for t in text_pattern_todos})
+        for bid in parent_block_ids:
+            try:
+                notion_client.blocks.delete(block_id=bid)
+            except Exception as de:
+                logger.warning(f"텍스트 블록 삭제 실패 ({bid}): {de}")
+
+        # 3. 미체크 항목을 실제 to_do 블록으로 삽입
+        if unchecked_texts:
+            new_todo_blocks = [
+                {
+                    "object": "block", "type": "to_do",
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": t}}], "checked": False}
+                }
+                for t in unchecked_texts
+            ]
+            # Task 페이지의 마지막 to_do 블록 이후 삽입 (To-do 섹션 유지)
+            resp = notion_client.blocks.children.list(block_id=task_id)
+            last_todo_id = None
+            # "To-do :" 헤더 paragraph도 찾아서 fallback으로 활용
+            todo_header_id = None
+            for b in resp.get("results", []):
+                bt = b.get("type", "")
+                if bt == "to_do":
+                    last_todo_id = b["id"]
+                elif bt == "paragraph":
+                    txt = "".join(rt.get("plain_text", "") for rt in b["paragraph"].get("rich_text", []))
+                    if "To-do" in txt:
+                        todo_header_id = b["id"]
+
+            after_id = last_todo_id or todo_header_id
+            if after_id:
+                notion_client.blocks.children.append(
+                    block_id=task_id, children=new_todo_blocks, after=after_id
+                )
+            else:
+                notion_client.blocks.children.append(block_id=task_id, children=new_todo_blocks)
+
+        return True
+    except Exception as e:
+        logger.error(f"text_pattern to_do 변환 실패: {e}")
+        return False
+
 
 def get_handover_data(task_id: str) -> list[dict]:
     if not NOTION_LOG_DB_ID or len(NOTION_LOG_DB_ID) < 10: return []
