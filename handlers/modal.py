@@ -266,6 +266,7 @@ def register_modals(app):
                         issues=log["issues"],
                         risk=log["risk"],
                         author_slack=author_name,
+                        is_new_task=True,   # 새 Task: 완료+내일예정 모두 To-do에 추가
                     )
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]
