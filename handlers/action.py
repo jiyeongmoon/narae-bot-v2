@@ -42,7 +42,6 @@ def register_actions(app):
         try:
             view=body["view"]; vid=view["id"]; vals=view["state"]["values"]
             kw=(vals.get("block_search",{}).get("search_keyword",{}).get("value","") or "").strip()
-            if not kw: return
 
             uid = body.get("user", {}).get("id")
             try:
@@ -51,9 +50,26 @@ def register_actions(app):
             except:
                 rn = None
 
+            # 검색어가 없으면 기본 내 업무 화면으로 복원
+            if not kw:
+                if rn:
+                    tasks = get_my_tasks(rn)
+                    if len(tasks) < 5:
+                        at = get_all_tasks()
+                        eids = {t["id"] for t in tasks}
+                        for t in at:
+                            if t["id"] not in eids:
+                                tasks.append(t)
+                                if len(tasks) >= 9: break
+                else:
+                    tasks = get_all_tasks()
+                logger.info(f"search cleared, reset to {len(tasks)} tasks for {rn}")
+                client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn or ""))
+                return
+
             tasks=search_tasks(kw, slack_display_name=rn)
             logger.info(f"search {kw} for {rn}: {len(tasks)}")
-            client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn, search_keyword=kw))
+            client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn or "", search_keyword=kw))
         except Exception as e: logger.error(f"search err: {e}")
 
     @app.action("filter_assignee")

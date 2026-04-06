@@ -191,7 +191,7 @@ def build_task_select_modal(tasks: list[dict],
                 }
             })
 
-    if search_keyword and not (my_tasks or unassigned_tasks or other_tasks):
+    if search_keyword and not (my_tasks or unassigned_tasks or other_groups):
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "검색 결과가 없습니다."},
