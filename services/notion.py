@@ -9,6 +9,7 @@ import re
 import time
 from notion_client import Client
 from config import NOTION_TOKEN, NOTION_TASK_DB_ID, NOTION_LOG_DB_ID, NOTION_USER_DB_ID
+from services.cache import get as cache_get, set as cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,11 @@ def _get_user_info_from_db(name: str) -> dict:
     if not NOTION_USER_DB_ID:
         return {"name": name, "aliases": [name], "person_id": None}
 
+    cache_key = f"user_info:{name}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
     try:
         response = notion_client.databases.query(
             database_id=NOTION_USER_DB_ID,
@@ -260,7 +266,9 @@ def _get_user_info_from_db(name: str) -> dict:
         person_list = props[PROP_USER["person"]]["people"]
         person_id   = person_list[0]["id"] if person_list else None
 
-        return {"name": db_name, "aliases": list(set(aliases)), "person_id": person_id}
+        result = {"name": db_name, "aliases": list(set(aliases)), "person_id": person_id}
+        cache_set(cache_key, result, ttl=300)  # 5분 캐시
+        return result
 
     except Exception as e:
         logger.error(f"인원 DB 조회 실패: {e}")
@@ -606,40 +614,49 @@ def get_weekly_updated_tasks() -> list[dict]:
 
 
 def get_task_todos(task_id: str) -> list[dict]:
-    """Task 페이지의 To-do 블록을 재귀적으로 조회하여 반환.
-    
-    callout/toggle 등 컨테이너 블록 내부에 중첩된 to_do 항목도 탐색함.
-    반환: [{"id": block_id, "text": "내용", "checked": True/False}, ...]
+    """Task 페이지의 To-do 항목을 재귀적으로 조회하여 반환.
+
+    - 실제 to_do 블록 탐색
+    - callout/toggle 등 컨테이너 내부도 탐색
+    - paragraph/bulleted_list_item 내의 '- [ ] ' 패턴도 파싱
     """
-    def _fetch_todos_recursive(block_id: str, depth: int = 0) -> list[dict]:
-        """재귀적으로 블록 자식을 탐색하여 to_do 블록 수집."""
-        if depth > 3:  # 무한 루프 방지 (최대 3단계)
+    TODO_PATTERN = re.compile(r"^\s*-\s*\[(x| )\]\s*(.+)$", re.IGNORECASE)
+
+    def _fetch(block_id: str, depth: int = 0) -> list[dict]:
+        if depth > 3:
             return []
         todos = []
         try:
-            response = notion_client.blocks.children.list(block_id=block_id)
-            for block in response.get("results", []):
+            resp = notion_client.blocks.children.list(block_id=block_id)
+            for block in resp.get("results", []):
                 btype = block.get("type", "")
                 if btype == "to_do":
-                    todo_item = block["to_do"]
-                    text = "".join(rt["plain_text"] for rt in todo_item.get("rich_text", []))
+                    raw = block["to_do"]
+                    text = "".join(rt["plain_text"] for rt in raw.get("rich_text", []))
                     if text:
-                        todos.append({
-                            "id": block["id"],
-                            "text": text,
-                            "checked": todo_item.get("checked", False),
-                        })
-                # 컨테이너 블록은 자식을 재귀 탐색
-                elif btype in ("callout", "toggle", "quote", "bulleted_list_item",
-                               "numbered_list_item", "column", "column_list"):
+                        todos.append({"id": block["id"], "text": text,
+                                      "checked": raw.get("checked", False), "block_type": "to_do"})
+                elif btype in ("paragraph", "bulleted_list_item", "numbered_list_item"):
+                    raw_text = "".join(rt["plain_text"]
+                                       for rt in block.get(btype, {}).get("rich_text", []))
+                    for line in raw_text.splitlines():
+                        m = TODO_PATTERN.match(line)
+                        if m:
+                            todos.append({"id": block["id"],
+                                          "text": m.group(2).strip(),
+                                          "checked": m.group(1).strip().lower() == "x",
+                                          "block_type": "text_pattern"})
                     if block.get("has_children"):
-                        todos.extend(_fetch_todos_recursive(block["id"], depth + 1))
+                        todos.extend(_fetch(block["id"], depth + 1))
+                elif btype in ("callout", "toggle", "quote", "column", "column_list"):
+                    if block.get("has_children"):
+                        todos.extend(_fetch(block["id"], depth + 1))
         except Exception as e:
             logger.warning(f"블록 조회 실패 (depth={depth}): {e}")
         return todos
 
     try:
-        return _fetch_todos_recursive(task_id)
+        return _fetch(task_id)
     except Exception as e:
         logger.error(f"To-do 조회 실패 ({task_id}): {e}")
         return []
