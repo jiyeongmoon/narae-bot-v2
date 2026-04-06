@@ -255,7 +255,8 @@ def get_weekly_updated_tasks() -> list[dict]:
 
 def create_task(task_name: str, assignee_notion_id: str = None,
                 deadline: str = None, client_name: str = None,
-                phase: str = None, initial_status: str = None) -> dict | None:
+                phase: str = None, initial_status: str = None,
+                assignee_name: str = None) -> dict | None:
     properties = {
         PROP["title"]: {
             "title": [{"text": {"content": task_name}}]
@@ -293,7 +294,7 @@ def create_task(task_name: str, assignee_notion_id: str = None,
         logger.info(f"새 Task 생성: {name}")
 
         # ── 페이지 본문 초기 포맷 삽입 ──────────────────────────
-        assignee_text = "미정"  # Notion API로 이름 역조회 생략, properties에 이미 반영됨
+        assignee_text = assignee_name or "지정 안 됨"
         client_text   = client_name or "미정"
         deadline_text = deadline    or "미정"
         phase_text    = phase       or "미정"
@@ -375,6 +376,21 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
                 ]}
             })
 
+        # ── 완료/내일 예정 → To-do 블록 ───────────────────────────────────
+        todo_blocks = []
+        if completed:
+            for line in [l.strip() for l in completed.splitlines() if l.strip()]:
+                todo_blocks.append({
+                    "object": "block", "type": "to_do",
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
+                })
+        if tomorrow:
+            for line in [l.strip() for l in tomorrow.splitlines() if l.strip()]:
+                todo_blocks.append({
+                    "object": "block", "type": "to_do",
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": False}
+                })
+
         page_id = None
         page_url = None
 
@@ -394,8 +410,11 @@ def save_log(task_id, task_name, log_date, completed, tomorrow, consultation="",
             page_url = page["url"]
             notion_client.blocks.children.append(block_id=page_id, children=blocks)
 
-        if task_id and task_id != "NEW_TASK":
-            try: notion_client.blocks.children.append(block_id=task_id, children=blocks)
+        if task_id and not task_id.startswith("NEW_TASK"):
+            try:
+                notion_client.blocks.children.append(block_id=task_id, children=blocks)
+                if todo_blocks:          # To-do 블록 추가
+                    notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
             except Exception as e: logger.error(f"Task 상세 페이지 기록 실패: {e}")
         
         if status_update: update_task_status(task_id, status_update)

@@ -248,6 +248,7 @@ def register_modals(app):
                 task = create_task(
                     task_name=new_name,
                     assignee_notion_id=notion_user_id,
+                    assignee_name=target_name or author_name,   # ← 본문 담당자 표시용
                     deadline=new_deadline,
                     client_name=new_client,
                     phase=new_phase,
