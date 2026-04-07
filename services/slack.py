@@ -275,7 +275,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                 "type": "input",
                 "block_id": "block_new_task_client_text",
                 "optional": True,
-                "label": {"type": "plain_text", "text": "* 발주처 (직접 입력)"},
+                "label": {"type": "plain_text", "text": "※ 신규 발주처 직접입력"},
                 "hint": {"type": "plain_text", "text": "입력 시 위 선택보다 우선 적용됩니다. 한글 검색어 그대로 입력하세요."},
                 "element": {
                     "type": "plain_text_input",
