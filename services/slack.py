@@ -428,7 +428,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "type": "input",
                     "block_id": "block_todo_check",
                     "optional": True,
-                    "label": {"type": "plain_text", "text": "📋 To-do 진행 현황 (완료 체크)"},
+                    "label": {"type": "plain_text", "text": "📋 To-do 진행 현황"},
                     "hint": {"type": "plain_text", "text": "체크 → '오늘 완료' / 미체크 → '내일 예정' 에 자동 반영"},
                     "element": {
                         "type": "checkboxes",

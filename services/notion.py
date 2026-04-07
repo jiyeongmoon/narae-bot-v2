@@ -388,13 +388,16 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]}}
         ]
         for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
-            if t: blocks.append({
-                "object": "block", "type": "paragraph",
-                "paragraph": {"rich_text": [
-                    {"type": "text", "text": {"content": f"{h}  "}, "annotations": {"bold": True}},
-                    {"type": "text", "text": {"content": t[:2000]}}
-                ]}
-            })
+            if t:
+                # "✅ 완료" 항목만 헤더 뒤에 줄바꿈 추가
+                header_text = f"{h}\n" if h == "✅ 완료" else f"{h}  "
+                blocks.append({
+                    "object": "block", "type": "paragraph",
+                    "paragraph": {"rich_text": [
+                        {"type": "text", "text": {"content": header_text}, "annotations": {"bold": True}},
+                        {"type": "text", "text": {"content": t[:2000]}}
+                    ]}
+                })
 
         # ── To-do 블록 생성 ──────────────────────────────────────────────
         # • 새 Task: 완료(체크) + 내일예정(미체크) 모두 To-do 섹션에 삽입
