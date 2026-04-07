@@ -161,9 +161,21 @@ def register_commands(app):
         logger.info(f"/알림테스트 요청: {user_id}")
         
         from services.scheduler import send_daily_reminder
-        success = send_daily_reminder(client)
+        from config import SLACK_CHANNEL_ID
         
-        msg = "✅ 알림 전송 성공! 채널을 확인해 주세요." if success else "❌ 알림 전송 실패. 로그를 확인해 주세요."
+        try:
+            # send_daily_reminder 내부에서 발생하는 에러를 직접 잡기 위해 로직을 여기서 재현하거나 
+            # 해당 함수가 에러 객체를 반환하도록 수정 (일단 여기서는 직접 호출 시도)
+            from services.slack import build_daily_reminder_message
+            client.chat_postMessage(
+                channel=SLACK_CHANNEL_ID,
+                text="[테스트] 오늘의 업무일지를 작성해 주세요.",
+                blocks=build_daily_reminder_message()
+            )
+            msg = f"✅ 알림 전송 성공! (채널 ID: {SLACK_CHANNEL_ID})"
+        except Exception as e:
+            msg = f"❌ 알림 전송 실패: {str(e)}\n(설정된 채널 ID: {SLACK_CHANNEL_ID})"
+        
         client.chat_postEphemeral(channel=body["channel_id"], user=user_id, text=msg)
 
     @app.command("/스케줄확인")
