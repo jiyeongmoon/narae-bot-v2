@@ -15,22 +15,29 @@ from services.slack import build_daily_reminder_message, build_weekly_summary_me
 logger = logging.getLogger(__name__)
 
 
+# 전역 스케줄러 인스턴스
+_scheduler = None
+
 def send_daily_reminder(slack_client):
     """채널에 일지 작성 알림 메시지를 전송합니다."""
     try:
-        slack_client.chat_postMessage(
+        from config import SLACK_CHANNEL_ID
+        res = slack_client.chat_postMessage(
             channel=SLACK_CHANNEL_ID,
             text="오늘의 업무일지를 작성해 주세요.",
             blocks=build_daily_reminder_message(),
         )
-        logger.info("일지 작성 알림 전송 완료")
+        logger.info(f"일지 작성 알림 전송 성공: {SLACK_CHANNEL_ID} (ts: {res.get('ts')})")
+        return True
     except Exception as e:
         logger.error(f"일지 작성 알림 전송 실패: {e}")
+        return False
 
 
 def send_weekly_summary(slack_client):
     """금요일 18:00 주간 요약을 채널에 전송합니다."""
     from services.notion import get_weekly_updated_tasks
+    from config import SLACK_CHANNEL_ID
 
     try:
         tasks = get_weekly_updated_tasks()
@@ -45,10 +52,30 @@ def send_weekly_summary(slack_client):
         logger.error(f"주간 요약 전송 실패: {e}")
 
 
+def get_scheduler_info():
+    """현재 스케줄러의 예약 상태를 요약하여 반환합니다."""
+    if not _scheduler:
+        return "스케줄러가 초기화되지 않았습니다."
+    
+    jobs = _scheduler.get_jobs()
+    if not jobs:
+        return "등록된 예약 작업이 없습니다."
+    
+    info = "[현재 예약 현황]\n"
+    for job in jobs:
+        next_run = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') if job.next_run_time else "없음"
+        info += f"- {job.id}: 다음 실행 {next_run} (KST)\n"
+    return info
+
+
 def start_scheduler(slack_client):
     """APScheduler 초기화 및 시작."""
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown()
+        
+    _scheduler = BackgroundScheduler()
+    _scheduler.add_job(
         send_daily_reminder,
         trigger=CronTrigger(
             day_of_week="mon-fri",
@@ -59,7 +86,7 @@ def start_scheduler(slack_client):
         args=[slack_client],
         id="daily_ilji_reminder",
     )
-    scheduler.add_job(
+    _scheduler.add_job(
         send_weekly_summary,
         trigger=CronTrigger(
             day_of_week="fri",
@@ -70,5 +97,9 @@ def start_scheduler(slack_client):
         args=[slack_client],
         id="weekly_summary",
     )
-    scheduler.start()
-    logger.info("스케줄러 시작 — 평일 17:00 일지 알림, 금 18:00 주간 요약 예약됨")
+    _scheduler.start()
+    
+    for job in _scheduler.get_jobs():
+        logger.info(f"작업 예약됨: {job.id} -> {job.next_run_time} (KST)")
+    
+    logger.info("스케줄러 시작 완료")

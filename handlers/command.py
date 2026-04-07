@@ -153,3 +153,26 @@ def register_commands(app):
         except Exception as e:
             logger.error(f"/kpi 처리 오류: {e}")
             respond(text=f"❌ 오류가 발생했습니다: {e}")
+    @app.command("/알림테스트")
+    def handle_test_reminder_command(ack, body, client, logger):
+        """수동으로 5시 알림을 트리거하여 채널 발송 여부 테스트"""
+        ack()
+        user_id = body["user_id"]
+        logger.info(f"/알림테스트 요청: {user_id}")
+        
+        from services.scheduler import send_daily_reminder
+        success = send_daily_reminder(client)
+        
+        msg = "✅ 알림 전송 성공! 채널을 확인해 주세요." if success else "❌ 알림 전송 실패. 로그를 확인해 주세요."
+        client.chat_postEphemeral(channel=body["channel_id"], user=user_id, text=msg)
+
+    @app.command("/스케줄확인")
+    def handle_check_schedule_command(ack, body, client, logger):
+        """현재 예약된 작업 현황 조회"""
+        ack()
+        user_id = body["user_id"]
+        logger.info(f"/스케줄확인 요청: {user_id}")
+        
+        from services.scheduler import get_scheduler_info
+        info = get_scheduler_info()
+        client.chat_postEphemeral(channel=body["channel_id"], user=user_id, text=f"🕒 {info}")
