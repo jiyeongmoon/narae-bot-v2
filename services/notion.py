@@ -205,6 +205,7 @@ def _parse_task(page: dict) -> dict:
         "client": client,
         "phase": phase,
         "risk_flag": risk_flag,
+        "created_time": page.get("created_time"),
     }
 
 

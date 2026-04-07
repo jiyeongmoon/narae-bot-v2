@@ -51,22 +51,23 @@ def build_task_select_modal(tasks: list[dict],
                             filter_user_name: str = "") -> dict:
     """활성 Task를 [담당자별] 섹션으로 분류하여 표시."""
 
-    # ── 필터링: 진행 중(🚀) 및 진행 예정(🙏) 상태만 ────────────────
+    # ── 필터링 및 정렬 ────────────────
     ACTIVE_STATUSES = ["🚀 진행 중", "🙏 진행 예정"]
-    filtered_tasks = [t for t in tasks if t.get("status") in ACTIVE_STATUSES]
-
-    # 담당자별 그룹화 (services/slack.py의 _group_by_person 활용)
-    grouped = _group_by_person(filtered_tasks)
-
-    # 본인 업무 (기존 is_assigned 활용)
-    my_tasks = [t for t in filtered_tasks if t.get("is_assigned")]
+    all_active = [t for t in tasks if t.get("status") in ACTIVE_STATUSES]
     
-    # 미배정 업무
+    # 모든 태스크를 생성일 역순으로 미리 정렬
+    all_active.sort(key=lambda x: x.get("created_time", ""), reverse=True)
+
+    # 담당자별 그룹화 (정렬된 순서 유지)
+    grouped = _group_by_person(all_active)
+
+    # 본인 업무 (정렬 유지됨)
+    my_tasks = [t for t in all_active if t.get("is_assigned")]
+    
+    # 미배정 업무 (정렬 유지됨)
     unassigned_tasks = grouped.get("미배정", [])
 
-    # 타인 업무 (본인 및 미배정 제외)
-    # _group_by_person 결과에서 본인은 slack_display_name(또는 is_assigned)으로 걸러야 함
-    # 여기서는 간단히 is_assigned가 False인 그룹들만 추출
+    # 타인 업무 (정렬 유지됨)
     other_groups = {name: tks for name, tks in grouped.items() if name != "미배정" and not any(t.get("is_assigned") for t in tks)}
 
     def _make_option(task: dict) -> dict:
@@ -261,7 +262,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                 "type": "input",
                 "block_id": "block_new_task_client",
                 "optional": True,
-                "label": {"type": "plain_text", "text": "① 발주처 (목록 선택)"},
+                "label": {"type": "plain_text", "text": "* 발주처 (목록 선택)"},
                 "hint": {"type": "plain_text", "text": "목록에 없으면 아래 '직접 입력'란을 사용하세요."},
                 "element": {
                     "type": "static_select",
@@ -274,7 +275,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                 "type": "input",
                 "block_id": "block_new_task_client_text",
                 "optional": True,
-                "label": {"type": "plain_text", "text": "① 발주처 (직접 입력, 우선 적용)"},
+                "label": {"type": "plain_text", "text": "* 발주처 (직접 입력)"},
                 "hint": {"type": "plain_text", "text": "입력 시 위 선택보다 우선 적용됩니다. 한글 검색어 그대로 입력하세요."},
                 "element": {
                     "type": "plain_text_input",

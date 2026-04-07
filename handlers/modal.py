@@ -104,9 +104,14 @@ def register_modals(app):
         new_name = None
         new_notion_assignee_id = None
         if is_new:
-            task_client = get_select("block_new_task_client", "new_task_client") or ""
+            # 발주처: 직접 입력이 있으면 우선, 없으면 목록 선택값
+            client_text   = get_val("block_new_task_client_text", "new_task_client_text") or ""
+            client_select = get_select("block_new_task_client",   "new_task_client") or ""
+            task_client   = (client_text or client_select).strip()
+
             sub         = get_val("block_new_task_sub",    "new_task_sub")    or ""
             outcome     = get_val("block_new_task_name",   "new_task_name")   or ""
+            
             # 발주처에서 대분류(prefix) 자동 파생
             prefix = CLIENT_TO_PREFIX.get(task_client, task_client) if task_client else ""
             if not task_client or not sub or not outcome:
@@ -210,9 +215,9 @@ def register_modals(app):
                 try:
                     all_todos = get_task_todos(task_id)
                     for todo in all_todos:
-                        if todo["id"] in checked_todo_ids:
+                        # 이번에 '새롭게' 체크한 항목만 "오늘 완료"에 기록 (기존 체크 항목 제외)
+                        if todo["id"] in checked_todo_ids and not todo.get("checked"):
                             auto_completed_lines.append(f"• {todo['text']}")
-                        # ★ 미체크 항목은 combined_tomorrow에 넣지 않음
                         #   → replace_text_pattern_todos()가 To-do 섹션에 실제 to_do 블록으로 삽입
                 except Exception as e:
                     logger.warning(f"To-do 재조회 실패: {e}")
