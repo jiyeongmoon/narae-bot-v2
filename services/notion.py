@@ -334,7 +334,7 @@ def create_task(task_name: str, assignee_notion_id: str = None,
             {"object": "block", "type": "paragraph",
              "paragraph": {"rich_text": []}},
             {"object": "block", "type": "paragraph",
-             "paragraph": {"rich_text": [{"type": "text", "text": {"content": "To-do :"}, "annotations": {"bold": True}}]}},
+             "paragraph": {"rich_text": [{"type": "text", "text": {"content": "\nTo-do :"}, "annotations": {"bold": True}}]}},
         ]
         try:
             notion_client.blocks.children.append(block_id=page_id, children=body_blocks)
@@ -553,10 +553,7 @@ def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) 
         return True
 
     try:
-        # 1. 미체크 항목 텍스트 수집 (나중에 실제 블록으로 변환)
-        unchecked_texts = [t["text"] for t in text_pattern_todos if t["id"] not in checked_ids]
-
-        # 2. 원본 텍스트 블록 처리 (전체 삭제 또는 부분 업데이트)
+        # 1. 원본 텍스트 블록 처리 (전체 삭제 또는 부분 업데이트)
         block_groups = {}
         for t in text_pattern_todos:
             bid = t["id"].split("::")[0]
@@ -590,13 +587,21 @@ def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) 
                 logger.warning(f"원본 블록({bid}) 처리 실패: {e}")
 
         # 3. 최적의 삽입 위치 탐색 (To-do 섹션 찾기)
-        if unchecked_texts:
+        if text_pattern_todos:
+            # 체크/미체크 모두 수집
+            todos_to_convert = []
+            for t in text_pattern_todos:
+                todos_to_convert.append({
+                    "text": t["text"],
+                    "checked": t["id"] in checked_ids
+                })
+
             new_todo_blocks = [
                 {
                     "object": "block", "type": "to_do", 
-                    "to_do": {"rich_text": [{"type": "text", "text": {"content": t}}], "checked": False}
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": item["text"]}}], "checked": item["checked"]}
                 }
-                for t in unchecked_texts
+                for item in todos_to_convert
             ]
             
             # 페이지 전체를 훑으며 'To-do' 앵커 찾기 (재귀 탐색)
