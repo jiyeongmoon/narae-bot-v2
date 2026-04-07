@@ -427,12 +427,6 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             }
         ]
         
-        # 내부에 표시할 자식 블록이 있다면 추가
-        if toggle_children:
-            blocks[1]["heading_3"]["children"] = toggle_children # 노션 API 하위 호환성을 위해 타입 딕셔너리 안에 추가하기도 하지만...
-            # 정석은 블록의 최상단입니다.
-            blocks[1]["children"] = toggle_children
-
         # ── To-do 블록 생성 ──────────────────────────────────────────────
         # • 새 Task: 완료(체크) + 내일예정(미체크) 모두 To-do 섹션에 삽입
         # • 기존 Task: 내일예정(미체크)만 삽입 (완료항목은 모달 체크 선택으로 이미 처리, 중복 생성 방지)
@@ -449,6 +443,13 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
                     "object": "block", "type": "to_do",
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": False}
                 })
+
+        def _append_log_blocks(target_id):
+            res = notion_client.blocks.children.append(block_id=target_id, children=blocks)
+            if toggle_children and "results" in res and res["results"]:
+                # 방금 추가한 heading_3 블록의 ID를 가져와 자식 요소를 추가합니다.
+                toggle_id = res["results"][-1]["id"]
+                notion_client.blocks.children.append(block_id=toggle_id, children=toggle_children)
 
         page_id = None
         page_url = None
@@ -467,7 +468,7 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
             page_id = page["id"]
             page_url = page["url"]
-            notion_client.blocks.children.append(block_id=page_id, children=blocks)
+            _append_log_blocks(page_id)
 
         if task_id and not task_id.startswith("NEW_TASK"):
             try:
@@ -475,10 +476,10 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
                     # 새 Task: To-do 먼저 (To-do 섹션에 위치) → 로그 나중에
                     if todo_blocks:
                         notion_client.blocks.children.append(block_id=task_id, children=todo_blocks)
-                    notion_client.blocks.children.append(block_id=task_id, children=blocks)
+                    _append_log_blocks(task_id)
                 else:
                     # 기존 Task: 로그 먼저 (하단 추가) → 내일예정만 to_do 섹션에 삽입
-                    notion_client.blocks.children.append(block_id=task_id, children=blocks)
+                    _append_log_blocks(task_id)
                     if todo_blocks:
                         try:
                             resp = notion_client.blocks.children.list(block_id=task_id)
