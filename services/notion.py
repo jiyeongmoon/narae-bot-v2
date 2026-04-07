@@ -383,16 +383,12 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
     if uinfo and author_slack in uinfo: display_author = uinfo[author_slack]["name"]
 
     try:
-        # 로그 엔트리 텍스트 블록
-        blocks = [
-            {"object": "block", "type": "divider", "divider": {}},
-            {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}]}}
-        ]
+        toggle_children = []
         for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
             if t:
                 if h in ("✅ 완료", "🔜 내일 예정"):
                     # 헤더는 독립된 단락으로 (줄바꿈 효과)
-                    blocks.append({
+                    toggle_children.append({
                         "object": "block", "type": "paragraph",
                         "paragraph": {"rich_text": [{"type": "text", "text": {"content": h}, "annotations": {"bold": True}}]}
                     })
@@ -404,19 +400,38 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
                             if line.startswith("• "): line = line[2:]
                             elif line.startswith("- "): line = line[2:]
                             
-                            blocks.append({
+                            toggle_children.append({
                                 "object": "block", "type": "bulleted_list_item",
                                 "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": line[:2000]}}]}
                             })
                 else:
                     # 기존 인라인 형식 유지 (협의, 이슈, 리스크)
-                    blocks.append({
+                    toggle_children.append({
                         "object": "block", "type": "paragraph",
                         "paragraph": {"rich_text": [
                             {"type": "text", "text": {"content": f"{h}  "}, "annotations": {"bold": True}},
                             {"type": "text", "text": {"content": t[:2000]}}
                         ]}
                     })
+
+        # 로그 엔트리 제목 블록 (토글 적용)
+        blocks = [
+            {"object": "block", "type": "divider", "divider": {}},
+            {
+                "object": "block", 
+                "type": "heading_3", 
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": f"📅 {log_date} | ✍️ {display_author}"}}],
+                    "is_toggleable": True
+                }
+            }
+        ]
+        
+        # 내부에 표시할 자식 블록이 있다면 추가
+        if toggle_children:
+            blocks[1]["heading_3"]["children"] = toggle_children # 노션 API 하위 호환성을 위해 타입 딕셔너리 안에 추가하기도 하지만...
+            # 정석은 블록의 최상단입니다.
+            blocks[1]["children"] = toggle_children
 
         # ── To-do 블록 생성 ──────────────────────────────────────────────
         # • 새 Task: 완료(체크) + 내일예정(미체크) 모두 To-do 섹션에 삽입
