@@ -902,35 +902,42 @@ def build_deadline_risk_message(tasks: list[dict]) -> list:
     ]
 
     for t in tasks:
-        # 정보 구성
-        parts = []
-        if t.get("client"):   parts.append(f"🏢 *{t['client']}*")
-        if t.get("phase"):    parts.append(f"📑 *{t['phase']}*")
-        if t.get("deadline"): parts.append(f"📅 ~*{t['deadline']}*")
+        notion_url = t.get("url", "")
+        name_link = f"<{notion_url}|*{t['name']}*>" if notion_url else f"*{t['name']}*"
+
+        # 주요 정보 구성 (라벨 추가)
+        info_parts = []
+        if t.get("client"):   info_parts.append(f"🏢 *발주처:* {t['client']}")
+        if t.get("deadline"): info_parts.append(f"📅 *마감일:* ~{t['deadline']}")
         
         assignees = ", ".join(t.get("assignees", []))
-        if assignees: parts.append(f"👤 *{assignees}*")
+        if assignees: info_parts.append(f"👤 *담당자:* {assignees}")
 
-        info_line = " | ".join(parts)
-        notion_url = t.get("url", "")
-        name_link = f"<{notion_url}|{t['name']}>" if notion_url else f"*{t['name']}*"
+        info_text = "\n".join(info_parts)
 
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"📌 {name_link}\n{info_line}"}
+            "text": {"type": "mrkdwn", "text": f"📌 {name_link}\n{info_text}"}
         })
 
-        if t.get("risk_content"):
+        # 리스크 내용 강조
+        risk_content = t.get("risk_content", "").strip()
+        if risk_content:
             blocks.append({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"> 💬 *리스크 내용:* {t['risk_content']}"}
+                "text": {"type": "mrkdwn", "text": f"> ⚠️ *리스크 세부내용*\n> {risk_content}"}
+            })
+        else:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "ℹ️ *최근 입력된 리스크 상세 내용이 없습니다.*"}]
             })
         
         blocks.append({"type": "divider"})
 
     blocks.append({
         "type": "context",
-        "elements": [{"type": "mrkdwn", "text": "위 리스크 업무의 원활한 마감을 위해 팀 내 긴조한 협의를 부탁드립니다."}]
+        "elements": [{"type": "mrkdwn", "text": "위 리스크 업무의 원활한 마감을 위해 팀 내 긴밀한 협의를 부탁드립니다."}]
     })
 
     return blocks

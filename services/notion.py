@@ -708,26 +708,42 @@ def get_deadline_risk_tasks() -> list[dict]:
             filter={"property": PROP["risk_flag"], "checkbox": {"equals": True}}
         )
         tasks = [_parse_task(p) for p in response["results"]]
+        logger.info(f"마감리스크 태스크 {len(tasks)}건 감지됨.")
         
         # 각 리스크 업무에 대해 최신 리스크 상세 내용(Log DB) 추출 전문화
         for t in tasks:
             t["risk_content"] = ""
-            if NOTION_LOG_DB_ID:
+            if NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10:
                 try:
-                    # 해당 태스크와 연결된 일지 중 '리스크' 필드가 있는 가장 최근 항목 조회
+                    # 해당 태스크와 연결된 일지 중 '리스크' 필드가 있는 항목 조회
                     log_resp = notion_client.databases.query(
                         database_id=NOTION_LOG_DB_ID,
-                        filter={"and": [
-                            {"property": "연결Task", "relation": {"contains": t["id"]}},
-                            {"property": "리스크", "rich_text": {"is_not_empty": True}}
-                        ]},
+                        filter={
+                            "and": [
+                                {"property": "연결Task", "relation": {"contains": t["id"]}},
+                                {"or": [
+                                    {"property": "리스크", "rich_text": {"is_not_empty": True}},
+                                    {"property": "카테고리", "multi_select": {"contains": "리스크"}}
+                                ]}
+                            ]
+                        },
                         sorts=[{"property": "날짜", "direction": "descending"}],
                         page_size=1
                     )
                     if log_resp["results"]:
                         risk_props = log_resp["results"][0]["properties"]
+                        # 1. '리스크' rich_text 필드 확인
                         r_text = risk_props.get("리스크", {}).get("rich_text", [])
-                        t["risk_content"] = "".join([rt.get("plain_text", "") for rt in r_text])
+                        content = "".join([rt.get("plain_text", "") for rt in r_text]).strip()
+                        
+                        # 2. '리스크' 필드가 비어있다면 다른 일지 내용에서 리스크 텍스트 추출 시도 (백업)
+                        if not content:
+                            issue_text = risk_props.get("이슈", {}).get("rich_text", [])
+                            content = "".join([rt.get("plain_text", "") for rt in issue_text]).strip()
+
+                        t["risk_content"] = content
+                        if content:
+                            logger.info(f"태스크 '{t['name']}'의 리스크 내용 발견: {content[:20]}...")
                 except Exception as e:
                     logger.warning(f"리스크 상세 내용 추출 실패(task: {t['name']}): {e}")
         return tasks
