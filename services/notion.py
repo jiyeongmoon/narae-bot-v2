@@ -700,6 +700,38 @@ def get_handover_data(task_id: str) -> list[dict]:
     except Exception: return []
 
 
+def get_latest_risk_from_blocks(page_id: str) -> str:
+    """페이지 본문 블록에서 '🚨 리스크' 패턴을 찾아 내용을 추출합니다."""
+    try:
+        # 1. 페이지의 최상위 블록들을 가져옵니다.
+        blocks = notion_client.blocks.children.list(block_id=page_id).get("results", [])
+        
+        # 2. 역순으로 훑으며 '📅'가 포함된 토글(heading_3) 또는 '🚨 리스크'가 포함된 단락을 찾습니다.
+        for block in reversed(blocks):
+            b_type = block.get("type")
+            
+            # 토글(heading_3) 내부에 리스크 내용이 있는지 재귀적으로 확인
+            if b_type == "heading_3" and block["heading_3"].get("is_toggleable"):
+                child_blocks = notion_client.blocks.children.list(block_id=block["id"]).get("results", [])
+                for cb in child_blocks:
+                    if cb.get("type") == "paragraph":
+                        rich_text = cb["paragraph"].get("rich_text", [])
+                        text_content = "".join([rt.get("plain_text", "") for rt in rich_text])
+                        if "🚨 리스크" in text_content:
+                            return text_content.replace("🚨 리스크", "").strip()
+
+            # 단락 자체가 리스크 내용인 경우
+            if b_type == "paragraph":
+                rich_text = block["paragraph"].get("rich_text", [])
+                text_content = "".join([rt.get("plain_text", "") for rt in rich_text])
+                if "🚨 리스크" in text_content:
+                    return text_content.replace("🚨 리스크", "").strip()
+        
+        return ""
+    except Exception as e:
+        logger.warning(f"블록 내 리스크 추출 실패({page_id}): {e}")
+        return ""
+
 def get_deadline_risk_tasks() -> list[dict]:
     """마감리스크가 체크된 모든 업무와 최근의 리스크 상세 내용을 가져옵니다."""
     try:
@@ -710,21 +742,21 @@ def get_deadline_risk_tasks() -> list[dict]:
         tasks = [_parse_task(p) for p in response["results"]]
         logger.info(f"마감리스크 태스크 {len(tasks)}건 감지됨.")
         
-        # 각 리스크 업무에 대해 최신 리스크 상세 내용(Log DB) 추출 전문화
         for t in tasks:
             t["risk_content"] = ""
-            if NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10:
+            
+            # 우선적으로 페이지 본문(Blocks)에서 리스크 내용을 직접 추출 시도 (사용자 요구사항)
+            content = get_latest_risk_from_blocks(t["id"])
+            
+            # 본문에 없으면 기존처럼 일지 DB(Log DB) 속성에서 조회 시도
+            if not content and NOTION_LOG_DB_ID and len(NOTION_LOG_DB_ID) > 10:
                 try:
-                    # 해당 태스크와 연결된 일지 중 '리스크' 필드가 있는 항목 조회
                     log_resp = notion_client.databases.query(
                         database_id=NOTION_LOG_DB_ID,
                         filter={
                             "and": [
                                 {"property": "연결Task", "relation": {"contains": t["id"]}},
-                                {"or": [
-                                    {"property": "리스크", "rich_text": {"is_not_empty": True}},
-                                    {"property": "카테고리", "multi_select": {"contains": "리스크"}}
-                                ]}
+                                {"property": "리스크", "rich_text": {"is_not_empty": True}}
                             ]
                         },
                         sorts=[{"property": "날짜", "direction": "descending"}],
@@ -732,20 +764,12 @@ def get_deadline_risk_tasks() -> list[dict]:
                     )
                     if log_resp["results"]:
                         risk_props = log_resp["results"][0]["properties"]
-                        # 1. '리스크' rich_text 필드 확인
                         r_text = risk_props.get("리스크", {}).get("rich_text", [])
                         content = "".join([rt.get("plain_text", "") for rt in r_text]).strip()
-                        
-                        # 2. '리스크' 필드가 비어있다면 다른 일지 내용에서 리스크 텍스트 추출 시도 (백업)
-                        if not content:
-                            issue_text = risk_props.get("이슈", {}).get("rich_text", [])
-                            content = "".join([rt.get("plain_text", "") for rt in issue_text]).strip()
+                except Exception:
+                    pass
 
-                        t["risk_content"] = content
-                        if content:
-                            logger.info(f"태스크 '{t['name']}'의 리스크 내용 발견: {content[:20]}...")
-                except Exception as e:
-                    logger.warning(f"리스크 상세 내용 추출 실패(task: {t['name']}): {e}")
+            t["risk_content"] = content
         return tasks
     except Exception as e:
         logger.error(f"마감리스크 업무 조회 실패: {e}")
