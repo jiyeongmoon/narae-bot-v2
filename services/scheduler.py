@@ -52,6 +52,29 @@ def send_weekly_summary(slack_client):
         logger.error(f"주간 요약 전송 실패: {e}")
 
 
+def send_deadline_risk_alert(slack_client):
+    """채널에 마감리스크 업무 알림 메시지를 전송합니다."""
+    from services.notion import get_deadline_risk_tasks
+    from services.slack import build_deadline_risk_message
+    from config import SLACK_CHANNEL_ID
+
+    try:
+        tasks = get_deadline_risk_tasks()
+        if not tasks:
+            logger.info("마감리스크 항목 없음 (알림 미발송)")
+            return
+
+        blocks = build_deadline_risk_message(tasks)
+        slack_client.chat_postMessage(
+            channel=SLACK_CHANNEL_ID,
+            text="🚨 마감리스크 업무 알림",
+            blocks=blocks,
+        )
+        logger.info(f"마감리스크 알림 전송 완료 ({len(tasks)}건)")
+    except Exception as e:
+        logger.error(f"마감리스크 알림 전송 실패: {e}")
+
+
 def get_scheduler_info():
     """현재 스케줄러의 예약 상태를 요약하여 반환합니다."""
     if not _scheduler:
@@ -96,6 +119,17 @@ def start_scheduler(slack_client):
         ),
         args=[slack_client],
         id="weekly_summary",
+    )
+    _scheduler.add_job(
+        send_deadline_risk_alert,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=9,
+            minute=0,
+            timezone="Asia/Seoul",
+        ),
+        args=[slack_client],
+        id="deadline_risk_alert",
     )
     _scheduler.start()
     

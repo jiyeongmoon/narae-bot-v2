@@ -14,6 +14,7 @@ from services.slack import (
     build_handover_select_modal,
     build_weekly_summary_message,
     build_kpi_report_message,
+    build_deadline_risk_message,
     build_error_message,
 )
 
@@ -188,3 +189,31 @@ def register_commands(app):
         from services.scheduler import get_scheduler_info
         info = get_scheduler_info()
         client.chat_postEphemeral(channel=body["channel_id"], user=user_id, text=f"🕒 {info}")
+
+    @app.command("/마감리스크")
+    def handle_deadline_risk_command(ack, body, client, respond, logger):
+        """현재 마감리스크가 체크된 업무 현황을 즉시 조회합니다. (타임아웃 방지를 위해 비동기 처리)"""
+        ack()  # 슬랙에 즉시 응답 반환 (3초 제한 회피)
+        user_id = body["user_id"]
+        logger.info(f"/마감리스크 요청 (비동기): {user_id}")
+
+        def _fetch_and_respond():
+            try:
+                from services.notion import get_deadline_risk_tasks
+                tasks = get_deadline_risk_tasks()
+                if not tasks:
+                    respond(text="✅ 현재 감지된 마감리스크 업무가 없습니다.")
+                    return
+
+                blocks = build_deadline_risk_message(tasks)
+                respond(
+                    text="🚨 마감리스크 업무 현황",
+                    blocks=blocks,
+                    replace_original=False
+                )
+            except Exception as e:
+                logger.error(f"/마감리스크 백그라운드 작업 오류: {e}")
+                respond(text=f"❌ 조회 중 오류가 발생했습니다: {e}")
+
+        import threading
+        threading.Thread(target=_fetch_and_respond).start()

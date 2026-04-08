@@ -370,6 +370,16 @@ def update_task_assignee_by_notion_id(page_id: str, notion_user_id: str) -> bool
         logger.error(f"담당자 업데이트 실패(notion_id): {e}")
         return False
 
+def update_task_risk(page_id: str, is_risk: bool) -> bool:
+    """노션 Task의 '마감리스크' 체크박스 속성을 업데이트합니다."""
+    try:
+        notion_client.pages.update(page_id=page_id, properties={PROP["risk_flag"]: {"checkbox": is_risk}})
+        logger.info(f"마감리스크 업데이트 성공: {page_id} -> {is_risk}")
+        return True
+    except Exception as e:
+        logger.error(f"마감리스크 업데이트 실패: {e}")
+        return False
+
 
 def save_log(task_id, task_name, log_date, completed, tomorrow,
              consultation="", issues="", risk="", status_update="", author_slack="",
@@ -501,6 +511,7 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
 
         if status_update: update_task_status(task_id, status_update)
         if author_slack: update_task_assignee(task_id, author_slack)
+        if risk: update_task_risk(task_id, True)
 
         return {"id": page_id or task_id, "url": page_url or f"https://notion.so/{task_id.replace('-', '')}"}
     except Exception as e:
@@ -687,3 +698,39 @@ def get_handover_data(task_id: str) -> list[dict]:
             res.append({"date": props.get("날짜", {}).get("date", {}).get("start", ""), "author": (props.get("작성자", {}).get("people", []) or [{"name": "미상"}])[0]["name"], "issues": _rt("이슈"), "risk": _rt("리스크")})
         return res
     except Exception: return []
+
+
+def get_deadline_risk_tasks() -> list[dict]:
+    """마감리스크가 체크된 모든 업무와 최근의 리스크 상세 내용을 가져옵니다."""
+    try:
+        response = notion_client.databases.query(
+            database_id=NOTION_TASK_DB_ID,
+            filter={"property": PROP["risk_flag"], "checkbox": {"equals": True}}
+        )
+        tasks = [_parse_task(p) for p in response["results"]]
+        
+        # 각 리스크 업무에 대해 최신 리스크 상세 내용(Log DB) 추출 전문화
+        for t in tasks:
+            t["risk_content"] = ""
+            if NOTION_LOG_DB_ID:
+                try:
+                    # 해당 태스크와 연결된 일지 중 '리스크' 필드가 있는 가장 최근 항목 조회
+                    log_resp = notion_client.databases.query(
+                        database_id=NOTION_LOG_DB_ID,
+                        filter={"and": [
+                            {"property": "연결Task", "relation": {"contains": t["id"]}},
+                            {"property": "리스크", "rich_text": {"is_not_empty": True}}
+                        ]},
+                        sorts=[{"property": "날짜", "direction": "descending"}],
+                        page_size=1
+                    )
+                    if log_resp["results"]:
+                        risk_props = log_resp["results"][0]["properties"]
+                        r_text = risk_props.get("리스크", {}).get("rich_text", [])
+                        t["risk_content"] = "".join([rt.get("plain_text", "") for rt in r_text])
+                except Exception as e:
+                    logger.warning(f"리스크 상세 내용 추출 실패(task: {t['name']}): {e}")
+        return tasks
+    except Exception as e:
+        logger.error(f"마감리스크 업무 조회 실패: {e}")
+        return []

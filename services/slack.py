@@ -882,3 +882,55 @@ def build_kpi_report_message(tasks: list[dict]) -> list:
             break
 
     return blocks
+
+
+def build_deadline_risk_message(tasks: list[dict]) -> list:
+    """마감리스크 항목 전용 알림 메시지 빌더."""
+    if not tasks:
+        return []
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "🚨 마감리스크 업무 보고", "emoji": True}
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "현재 노션 Task DB에서 *마감리스크*가 감지된 업무 목록입니다."}
+        },
+        {"type": "divider"}
+    ]
+
+    for t in tasks:
+        # 정보 구성
+        parts = []
+        if t.get("client"):   parts.append(f"🏢 *{t['client']}*")
+        if t.get("phase"):    parts.append(f"📑 *{t['phase']}*")
+        if t.get("deadline"): parts.append(f"📅 ~*{t['deadline']}*")
+        
+        assignees = ", ".join(t.get("assignees", []))
+        if assignees: parts.append(f"👤 *{assignees}*")
+
+        info_line = " | ".join(parts)
+        notion_url = t.get("url", "")
+        name_link = f"<{notion_url}|{t['name']}>" if notion_url else f"*{t['name']}*"
+
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"📌 {name_link}\n{info_line}"}
+        })
+
+        if t.get("risk_content"):
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"> 💬 *리스크 내용:* {t['risk_content']}"}
+            })
+        
+        blocks.append({"type": "divider"})
+
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": "위 리스크 업무의 원활한 마감을 위해 팀 내 긴조한 협의를 부탁드립니다."}]
+    })
+
+    return blocks
