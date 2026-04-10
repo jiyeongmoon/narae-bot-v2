@@ -120,7 +120,7 @@ def register_commands(app):
         logger.info(f"/주간요약 요청: {user_id}")
 
         try:
-            tasks = get_weekly_updated_tasks()
+            tasks = get_weekly_updated_tasks(only_assigned=True)
             blocks = build_weekly_summary_message(tasks)
             respond(
                 text="📊 주간 요약",
@@ -144,7 +144,8 @@ def register_commands(app):
         logger.info(f"/kpi 요청: {user_id}")
 
         try:
-            tasks = get_weekly_updated_tasks()
+            # KPI 리포트는 미배정 업무를 포함하여 전체 현황을 보고합니다.
+            tasks = get_weekly_updated_tasks(only_assigned=False)
             blocks = build_kpi_report_message(tasks)
             # respond 기본값 = ephemeral (본인만 확인)
             respond(

@@ -264,15 +264,32 @@ def get_all_tasks() -> list[dict]:
         return [_parse_task(p) for p in response["results"]]
     except Exception: return []
 
-def get_weekly_updated_tasks() -> list[dict]:
+def get_weekly_updated_tasks(only_assigned: bool = False) -> list[dict]:
+    """최근 7일간 업데이트된 업무를 가져옵니다. only_assigned=True 이면 담당자가 있는 업무만 필터링합니다."""
     try:
         ago = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        
+        # 기본 필터: 7일 내 수정됨 + 활성 상태(완료/보류 제외)
+        filter_conditions = [
+            {"timestamp": "last_edited_time", "last_edited_time": {"after": ago}},
+            *_build_active_task_filter()["and"]
+        ]
+        
+        # 담당자가 지정된 업무만 필터링 (미배정 제외)
+        if only_assigned:
+            filter_conditions.append({
+                "property": PROP["assignee"],
+                "people": {"is_not_empty": True}
+            })
+            
         response = notion_client.databases.query(
             database_id=NOTION_TASK_DB_ID,
-            filter={"and": [{"timestamp": "last_edited_time", "last_edited_time": {"after": ago}}, *_build_active_task_filter()["and"]]}
+            filter={"and": filter_conditions}
         )
         return [_parse_task(p) for p in response["results"]]
-    except Exception: return []
+    except Exception as e:
+        logger.error(f"주간 업데이트 업무 조회 실패: {e}")
+        return []
 
 def create_task(task_name: str, assignee_notion_id: str = None,
                 deadline: str = None, client_name: str = None,

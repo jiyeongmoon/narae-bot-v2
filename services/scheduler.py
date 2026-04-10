@@ -40,7 +40,7 @@ def send_weekly_summary(slack_client):
     from config import SLACK_CHANNEL_ID
 
     try:
-        tasks = get_weekly_updated_tasks()
+        tasks = get_weekly_updated_tasks(only_assigned=True)
         blocks = build_weekly_summary_message(tasks)
         slack_client.chat_postMessage(
             channel=SLACK_CHANNEL_ID,
