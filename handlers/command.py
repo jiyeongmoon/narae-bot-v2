@@ -245,7 +245,7 @@ def register_commands(app):
                             "emoji": True
                         },
                         "style": "primary",
-                        "url": "narae-proposal://launch",
+                        "url": "https://web-production-df45.up.railway.app/launch",
                         "action_id": "launch_proposal_app_btn"
                     }
                 ]

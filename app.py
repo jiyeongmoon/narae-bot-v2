@@ -61,6 +61,30 @@ flask_app = Flask(__name__)
 def health():
     return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
 
+@flask_app.route("/launch", methods=["GET"])
+def launch_proposal():
+    html_content = '''
+    <html>
+        <head>
+            <title>나래 제안서 시스템 런처</title>
+            <meta charset="utf-8">
+        </head>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc;">
+            <h2 style="color: #1e293b;">🚀 제안서 시스템을 실행하는 중입니다...</h2>
+            <p style="color: #475569;">브라우저 상단에서 <b>'narae-proposal 열기'</b>를 허용해 주세요.</p>
+            <script>
+                // 접속 즉시 로컬 프로토콜 호출
+                window.location.href = "narae-proposal://launch";
+                // 2초 뒤 창 자동 닫기 시도 (일부 브라우저 제한 있을 수 있음)
+                setTimeout(function() {
+                    window.close();
+                }, 2000);
+            </script>
+        </body>
+    </html>
+    '''
+    return html_content, 200
+
 def run_flask():
     port = int(os.environ.get("PORT", 3000))
     flask_app.run(host="0.0.0.0", port=port, debug=False)
