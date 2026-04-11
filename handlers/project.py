@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 # 루트 폴더 옵션 정의
 ROOT_OPTIONS = [
     {"label": "사업 실무 (02_Active_Project)", "value": "02_Active_Project"},
-    {"label": "용역 행정 (01_Management)", "value": "01_Management"},
-    {"label": "제안서/입찰 (03_Sales_Proposals)", "value": "03_Sales_Proposals"},
+    {"label": "용역 행정 (01_Management)", "value": "01_Management/05_용역행정_Admin"},
+    {"label": "제안서/입찰 (03_Sales_Proposals)", "value": "03_Sales_Proposals/01_제안서및입찰_PS"},
 ]
 
 def register_project_handlers(app):
