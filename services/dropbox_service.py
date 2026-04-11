@@ -64,16 +64,9 @@ class DropboxService:
         scan_paths = []
         year_folder = f"20{year_str}년"
         
-        # 1. 지정된 루트 하위의 연도 폴더 (신규 계층형)
+        # 1. 지정된 루트 폴더 직접 탐색 (Flat 구조)
         if root_override:
-            # 루트가 직접 지정된 경우, 그 아래의 CATEGORY 명칭을 찾아서 들어감
-            cat_suffix = CATEGORY_MAP.get(p_type, "").split("/")[-1]
-            if p_type == "PS": # Sales는 연도 폴더가 바로 아래
-                scan_paths.append(f"/{root_override}/{year_folder}")
-            elif p_type == "C": # Admin은 연도 구분 없음
-                scan_paths.append(f"/{root_override}")
-            else:
-                scan_paths.append(f"/{root_override}/{cat_suffix}/{year_folder}")
+            scan_paths.append(f"/{root_override}")
         else:
             # 기본 맵 기반 경로
             if p_type == "PS":
@@ -118,13 +111,7 @@ class DropboxService:
         year_folder = f"20{year_str}년"
         
         if root_override:
-            cat_suffix = CATEGORY_MAP.get(p_type, "").split("/")[-1]
-            if p_type == "PS":
-                parent_path = f"/{root_override}/{year_folder}"
-            elif p_type == "C":
-                parent_path = f"/{root_override}"
-            else:
-                parent_path = f"/{root_override}/{cat_suffix}/{year_folder}"
+            parent_path = f"/{root_override}"
         else:
             category_rel_path = CATEGORY_MAP.get(p_type, "")
             if p_type == "PS": parent_path = f"/{category_rel_path}/{year_folder}"
