@@ -107,11 +107,8 @@ def register_project_handlers(app):
             
             if success:
                 path = result["path"]
-                link = result["link"]
                 
                 msg_content = f"✅ *폴더 생성 완료!*\n• *ID*: `{p_id}`\n• *명칭*: {p_name}\n• *위치*: `{path}`"
-                if link:
-                    msg_content += f"\n\n🌐 <{link}|드롭박스 화면에서 바로 열기>"
                     
                 client.chat_postMessage(channel=user_id, text=msg_content)
             else:
