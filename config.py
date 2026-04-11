@@ -52,6 +52,54 @@ SLACK_LOG_CHANNEL_ID = os.environ.get("SLACK_LOG_CHANNEL_ID")
 # 대표 슬랙 사용자 ID (/kpi 명령어 접근 제한용, 선택)
 SLACK_ADMIN_ID = os.environ.get("SLACK_ADMIN_ID", "")
 
+# ── 드롭박스 (Dropbox) ──────────────────────────────────────────
+DROPBOX_APP_KEY = os.environ.get("DROPBOX_APP_KEY")
+DROPBOX_APP_SECRET = os.environ.get("DROPBOX_APP_SECRET")
+DROPBOX_REFRESH_TOKEN = os.environ.get("DROPBOX_REFRESH_TOKEN")
+
+# ── 프로젝트 폴더 체계 (SOP v2.4) ──────────────────────────────
+# 사업팀 표준 8대 하위 폴더
+NARE_STANDARD_FOLDERS = [
+    "00_행정 및 착수", "01_기초조사 및 현황분석", "02_기본구상 및 전략",
+    "03_계획수립 및 설계", "04_협의 및 심의", "05_최종성과물",
+    "06_회의록 및 보고", "07_참고 및 기초자료"
+]
+
+# 경영지원팀 표준 4대 하위 폴더 (용역행정)
+NARE_ADMIN_FOLDERS = [
+    "01_계약", "02_착수", "03_예산및인력", "04_완료"
+]
+
+# 분야별 코드 매핑
+BIZ_CODE_DISPLAY = {
+    "UR": "UR (도시재생 전략·활성화계획)",
+    "PL": "PL (도시계획 - 지구단위/관리/정비계획)",
+    "RG": "RG (지역개발 - 농촌재구조화/협약/기초생활거점)",
+    "CS": "CS (컨설팅 - 모니터링/성과평가/변경용역)",
+    "RD": "RD (연구개발 - 학술연구용역)",
+    "OP": "OP (운영/거버넌스 - 현장지원/역량강화)",
+    "PS": "PS (제안서/입찰 - Sales & Proposals)",
+    "C":  "C (용역 행정 관리 - Contract Admin)"
+}
+
+# 분야별 상위 폴더 경로 (Dropbox 내 기준)
+CATEGORY_MAP = {
+    "UR": "02_Active_Project/01_도시재생 (UR)",
+    "PL": "02_Active_Project/02_도시계획 (PL)",
+    "RG": "02_Active_Project/03_지역개발 (RG)",
+    "CS": "02_Active_Project/04_도시 및 지역 컨설팅 (CS)",
+    "RD": "02_Active_Project/05_연구개발 (RD)",
+    "OP": "02_Active_Project/06_역량강화 (OP)",
+    "PS": "03_Sales_Proposals",
+    "C":  "01_Management/05_용역행정_Admin"
+}
+
+FOLDER_STRUCTURES = {
+    "C": NARE_ADMIN_FOLDERS,
+    # 나머지는 모두 8종 표준
+    **{k: NARE_STANDARD_FOLDERS for k in BIZ_CODE_DISPLAY.keys() if k != "C"}
+}
+
 # ── 유효성 검사 ───────────────────────────────────────────────
 def validate_config():
     """앱 시작 시 필수 환경변수가 모두 있는지 확인합니다."""
