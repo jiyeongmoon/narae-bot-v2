@@ -18,19 +18,30 @@ class DropboxService:
         self.dbx = None
 
     def _get_client(self):
-        """Dropbox 클라이언트 인스턴스를 반환 (토큰 자동 갱신 지원)"""
+        """Dropbox 클라이언트 인스턴스를 반환 (토큰 자동 갱신 및 팀 공간 지원)"""
         if self.dbx is None:
             if not self.refresh_token:
                 logger.error("Dropbox Refresh Token이 설정되지 않았습니다.")
                 return None
             try:
                 # Scoped Access 및 Refresh Token을 사용하여 클라이언트 생성
-                self.dbx = dropbox.Dropbox(
+                dbx = dropbox.Dropbox(
                     app_key=self.app_key,
                     app_secret=self.app_secret,
                     oauth2_refresh_token=self.refresh_token
                 )
-                logger.info("Dropbox API 클라이언트 연결 성공")
+                
+                # 팀 공간(Business 계정) 대응을 위한 root_namespace_id 셋팅
+                try:
+                    account_info = dbx.users_get_current_account()
+                    root_ns = account_info.root_info.root_namespace_id
+                    self.dbx = dbx.with_path_root(dropbox.common.PathRoot.root(root_ns))
+                    logger.info(f"Dropbox 연결 성공 (팀 루트 반영: {root_ns})")
+                except Exception as ex:
+                    # 권한 부족이나 개인 계정일 경우 폴백 처리
+                    logger.warning(f"팀 루트 파악 실패, 기본 경로로 진행: {ex}")
+                    self.dbx = dbx
+                    logger.info("Dropbox 연결 성공 (기본 경로)")
             except Exception as e:
                 logger.error(f"Dropbox 연결 실패: {e}")
                 return None
