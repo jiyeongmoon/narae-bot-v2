@@ -18,21 +18,26 @@ def register_project_handlers(app):
 
     @app.action("project_type_select")
     def handle_type_change(ack, body, client):
-        """분야 선택 변경 시 드롭박스를 스캔하여 순번 자동 제안"""
+        """분야 선택 변경 시 드롭박스를 스캔하여 순번 자동 제안 (기존 입력값 보존)"""
         ack()
         view_id = body["view"]["id"]
+        values = body["view"]["state"]["values"]
         selected_type = body["actions"][0]["selected_option"]["value"]
+        
+        # 기존에 입력된 프로젝트명이 있다면 보존
+        current_name = values.get("block_name", {}).get("project_name_input", {}).get("value") or ""
         
         # 현재 연도 (2자리)
         curr_year = datetime.now().strftime("%y")
         
-        # 드롭박스 API를 통해 다음 순번 계산 (약간 느릴 수 있음)
+        # 드롭박스 API를 통해 다음 순번 계산
         suggested_id = dropbox_service.get_next_id(selected_type, curr_year)
         
-        # 모달 업데이트
+        # 모달 업데이트 (기존 이름 유지)
         new_view = build_project_creation_modal(
             selected_type=selected_type,
-            suggested_id=suggested_id
+            suggested_id=suggested_id,
+            initial_name=current_name
         )
         client.views_update(view_id=view_id, view=new_view)
 
@@ -40,12 +45,20 @@ def register_project_handlers(app):
     def handle_project_submit(ack, body, client, logger):
         """프로젝트 폴더 생성 프로세스 실행 (비동기)"""
         user_id = body["user"]["id"]
-        values = body["view"]["state"]["values"]
+        view_state = body["view"]["state"]["values"]
         
+        # 안전한 값 추출 헬퍼
+        def get_val(block: str, action: str):
+            return view_state.get(block, {}).get(action, {}).get("value")
+        
+        def get_select(block: str, action: str):
+            opt = view_state.get(block, {}).get(action, {}).get("selected_option")
+            return opt["value"] if opt else None
+
         # 1. 입력값 추출
-        p_type = values["block_type"]["project_type_select"]["selected_option"]["value"]
-        p_id = values["block_id"]["project_id_input"]["value"]
-        p_name = values["block_name"]["project_name_input"]["value"]
+        p_type = get_select("block_type", "project_type_select")
+        p_id = get_val("block_id", "project_id_input")
+        p_name = get_val("block_name", "project_name_input")
         
         # 2. 필수 값 검증
         if not p_id or not p_name:
@@ -101,7 +114,7 @@ def register_project_handlers(app):
                 except:
                     pass
 
-def build_project_creation_modal(selected_type=None, suggested_id=""):
+def build_project_creation_modal(selected_type=None, suggested_id="", initial_name=""):
     """프로젝트 생성 모달 빌더"""
     options = [
         {"text": {"type": "plain_text", "text": label}, "value": code}
@@ -145,6 +158,7 @@ def build_project_creation_modal(selected_type=None, suggested_id=""):
             "element": {
                 "type": "plain_text_input",
                 "action_id": "project_name_input",
+                "initial_value": initial_name,
                 "placeholder": {"type": "plain_text", "text": "예: 이천시 장호원읍 도시재생"}
             },
             "label": {"type": "plain_text", "text": "📝 프로젝트/용역 명칭"}
