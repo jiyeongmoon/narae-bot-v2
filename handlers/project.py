@@ -124,10 +124,26 @@ def register_project_handlers(app):
 
 def build_project_creation_modal(selected_type=None, selected_root=None, suggested_id="", initial_name=""):
     """프로젝트 생성 모달 빌더 (v2.5)"""
+    
+    # 저장 위치에 따른 분야 옵션 필터링
+    filtered_codes = []
+    if selected_root == "01_Management/05_용역행정_Admin":
+        filtered_codes = ["C"]
+    elif selected_root == "03_Sales_Proposals/01_제안서및입찰_PS":
+        filtered_codes = ["PS"]
+    else:
+        # 기본값 (사업 실무)
+        filtered_codes = [k for k in BIZ_CODE_DISPLAY.keys() if k not in ["C", "PS"]]
+
+    # 선택된 분야가 필터링된 배열에 없으면 초기화
+    if selected_type not in filtered_codes:
+        selected_type = None
+
     type_options = [
         {"text": {"type": "plain_text", "text": label}, "value": code}
-        for code, label in BIZ_CODE_DISPLAY.items()
+        for code, label in BIZ_CODE_DISPLAY.items() if code in filtered_codes
     ]
+    
     root_options = [
         {"text": {"type": "plain_text", "text": opt["label"]}, "value": opt["value"]}
         for opt in ROOT_OPTIONS
