@@ -1,10 +1,18 @@
 import logging
+import json
 from datetime import datetime
 from services.slack import build_error_message
 from services.dropbox_service import dropbox_service
-from config import BIZ_CODE_DISPLAY
+from config import BIZ_CODE_DISPLAY, CATEGORY_MAP
 
 logger = logging.getLogger(__name__)
+
+# 루트 폴더 옵션 정의
+ROOT_OPTIONS = [
+    {"label": "사업 실무 (02_Active_Project)", "value": "02_Active_Project"},
+    {"label": "용역 행정 (01_Management)", "value": "01_Management"},
+    {"label": "제안서/입찰 (03_Sales_Proposals)", "value": "03_Sales_Proposals"},
+]
 
 def register_project_handlers(app):
     """프로젝트 생성 관련 슬랙 핸들러 등록"""
@@ -12,30 +20,45 @@ def register_project_handlers(app):
     @app.command("/폴더생성")
     def handle_create_project_cmd(ack, body, client):
         ack()
-        # 초기 모달 띄우기
-        view = build_project_creation_modal()
+        # 초기 모달 띄우기 (기본값: 사업 실무)
+        view = build_project_creation_modal(selected_root="02_Active_Project")
         client.views_open(trigger_id=body["trigger_id"], view=view)
 
     @app.action("project_type_select")
-    def handle_type_change(ack, body, client):
-        """분야 선택 변경 시 드롭박스를 스캔하여 순번 자동 제안 (기존 입력값 보존)"""
+    @app.action("project_root_select")
+    def handle_modal_updates(ack, body, client):
+        """분야 또는 루트 폴더 변경 시 순번 재계산 및 모달 업데이트"""
         ack()
         view_id = body["view"]["id"]
-        values = body["view"]["state"]["values"]
-        selected_type = body["actions"][0]["selected_option"]["value"]
+        view_state = body["view"]["state"]["values"]
         
-        # 기존에 입력된 프로젝트명이 있다면 보존
-        current_name = values.get("block_name", {}).get("project_name_input", {}).get("value") or ""
+        # 현재 선택된 값들 추출
+        selected_type = (view_state.get("project_type_block", {})
+                         .get("project_type_select", {})
+                         .get("selected_option", {})
+                         .get("value"))
+        
+        selected_root = (view_state.get("project_root_block", {})
+                         .get("project_root_select", {})
+                         .get("selected_option", {})
+                         .get("value"))
+                         
+        current_name = (view_state.get("project_name_block", {})
+                        .get("project_name_input", {})
+                        .get("value") or "")
         
         # 현재 연도 (2자리)
         curr_year = datetime.now().strftime("%y")
         
         # 드롭박스 API를 통해 다음 순번 계산
-        suggested_id = dropbox_service.get_next_id(selected_type, curr_year)
+        suggested_id = ""
+        if selected_type and selected_root:
+            suggested_id = dropbox_service.get_next_id(selected_type, curr_year, root_override=selected_root)
         
-        # 모달 업데이트 (기존 이름 유지)
+        # 모달 업데이트
         new_view = build_project_creation_modal(
             selected_type=selected_type,
+            selected_root=selected_root,
             suggested_id=suggested_id,
             initial_name=current_name
         )
@@ -46,128 +69,148 @@ def register_project_handlers(app):
         """프로젝트 폴더 생성 프로세스 실행 (비동기)"""
         user_id = body["user"]["id"]
         view_state = body["view"]["state"]["values"]
+        meta = json.loads(body["view"].get("private_metadata", "{}"))
         
-        # 안전한 값 추출 헬퍼
-        def get_val(block: str, action: str):
-            return view_state.get(block, {}).get(action, {}).get("value")
-        
-        def get_select(block: str, action: str):
-            opt = view_state.get(block, {}).get(action, {}).get("selected_option")
-            return opt["value"] if opt else None
+        # 1. 입력값 추출 (State -> Metadata 순으로 확인)
+        def get_val(block: str, action: str, meta_key: str):
+            val = view_state.get(block, {}).get(action, {}).get("value")
+            return val if val else meta.get(meta_key, "")
 
-        # 1. 입력값 추출
-        p_type = get_select("block_type", "project_type_select")
-        p_id = get_val("block_id", "project_id_input")
-        p_name = get_val("block_name", "project_name_input")
+        def get_select(block: str, action: str, meta_key: str):
+            opt = view_state.get(block, {}).get(action, {}).get("selected_option")
+            val = opt["value"] if opt else None
+            return val if val else meta.get(meta_key)
+
+        p_type = get_select("project_type_block", "project_type_select", "p_type")
+        p_root = get_select("project_root_block", "project_root_select", "p_root")
+        p_id = get_val("project_id_block", "project_id_input", "p_id")
+        p_name = get_val("project_name_block", "project_name_input", "p_name")
         
-        # 2. 필수 값 검증
+        # 2. 필수 값 검증 (p_id, p_name만 체크)
         if not p_id or not p_name:
             ack(response_action="errors", errors={
-                "block_id": "ID를 입력해주세요.",
-                "block_name": "프로젝트명을 입력해주세요."
+                "project_id_block": "ID가 인식되지 않았습니다. 입력을 확인해 주세요.",
+                "project_name_block": "명칭이 인식되지 않았습니다. 입력을 확인해 주세요."
             })
             return
             
-        # 3. ACK - 모달 즉시 닫기
-        ack(response_action="clear")
+        ack(response_action="clear") # 모달 즉시 닫기
         
-        # 4. 진행 상태 알림 발송 (업무일지 방식)
+        # 3. 진행 상태 알림 발송
         progress_msg = None
         try:
             progress_msg = client.chat_postMessage(
                 channel=user_id,
-                text=f"⏳ *{p_id}* 프로젝트 폴더를 드롭박스에 생성하고 있습니다... 잠시만 기다려 주세요."
+                text=f"⏳ *{p_id}* 폴더를 드롭박스(`{p_root}`)에 생성 중입니다..."
             )
         except Exception as pe:
             logger.error(f"진행 알림 발송 실패: {pe}")
 
-        # 5. 백그라운드 작업 수행 (폴더 생성)
+        # 4. 백그라운드 작업 (폴더 생성)
         try:
-            success, result = dropbox_service.create_project_folders(p_id, p_name, p_type)
+            success, result = dropbox_service.create_project_folders(p_id, p_name, p_type, root_override=p_root)
             
             if success:
                 path = result["path"]
                 link = result["link"]
-                
-                msg_content = f"✅ *폴더 생성 완료!*\n• *ID*: `{p_id}`\n• *명칭*: {p_name}\n• *경로*: `{path}`"
+                msg_content = f"✅ *폴더 생성 완료!*\n• *ID*: `{p_id}`\n• *명칭*: {p_name}\n• *위치*: `{path}`"
                 if link:
                     msg_content += f"\n<{link}|📎 드롭박스에서 바로 열기>"
-                
-                # 성공 메시지로 업데이트 또는 신규 발송
                 client.chat_postMessage(channel=user_id, text=msg_content)
             else:
-                client.chat_postMessage(
-                    channel=user_id, 
-                    blocks=build_error_message(f"폴더 생성 실패: {result}")
-                )
+                client.chat_postMessage(channel=user_id, blocks=build_error_message(f"폴더 생성 실패: {result}"))
         except Exception as e:
-            logger.error(f"폴더 생성 핸들러 오류: {e}")
-            client.chat_postMessage(
-                channel=user_id, 
-                blocks=build_error_message(f"시스템 오류 발생: {str(e)}")
-            )
+            logger.error(f"폴더 생성 오류: {e}")
+            client.chat_postMessage(channel=user_id, blocks=build_error_message(f"시스템 오류: {str(e)}"))
         finally:
-            # 진행 알림 삭제
             if progress_msg:
-                try:
-                    client.chat_delete(channel=user_id, ts=progress_msg["ts"])
-                except:
-                    pass
+                try: client.chat_delete(channel=user_id, ts=progress_msg["ts"])
+                except: pass
 
-def build_project_creation_modal(selected_type=None, suggested_id="", initial_name=""):
-    """프로젝트 생성 모달 빌더"""
-    options = [
+def build_project_creation_modal(selected_type=None, selected_root=None, suggested_id="", initial_name=""):
+    """프로젝트 생성 모달 빌더 (v2.5)"""
+    type_options = [
         {"text": {"type": "plain_text", "text": label}, "value": code}
         for code, label in BIZ_CODE_DISPLAY.items()
     ]
+    root_options = [
+        {"text": {"type": "plain_text", "text": opt["label"]}, "value": opt["value"]}
+        for opt in ROOT_OPTIONS
+    ]
     
-    initial_option = next((opt for opt in options if opt["value"] == selected_type), None) if selected_type else None
+    initial_type_opt = next((opt for opt in type_options if opt["value"] == selected_type), None)
+    initial_root_opt = next((opt for opt in root_options if opt["value"] == selected_root), None)
     
+    # 메타데이터에 현재 상태 저장하여 유실 방지
+    metadata = {
+        "p_type": selected_type,
+        "p_root": selected_root,
+        "p_id": suggested_id,
+        "p_name": initial_name
+    }
+
     blocks = [
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "✨ *신규 프로젝트/용역 폴더 생성 (SOP v2.4)*\n분야를 선택하면 순번을 자동 계산하며, 드롭박스 클라우드에 표준 폴더가 자동 구축됩니다."}
+            "text": {"type": "mrkdwn", "text": "✨ *나래공간 지능형 폴더 생성 (v2.5)*\n저장 위치와 분야를 선택하면 클라우드에 표준 폴더가 자동 구축됩니다."}
+        },
+        {
+            "type": "divider"
         },
         {
             "type": "input",
-            "block_id": "block_type",
+            "block_id": "project_root_block",
+            "dispatch_action": True,
+            "element": {
+                "type": "static_select",
+                "action_id": "project_root_select",
+                "placeholder": {"type": "plain_text", "text": "저장 위치 (Root) 선택"},
+                "options": root_options,
+                **({"initial_option": initial_root_opt} if initial_root_opt else {})
+            },
+            "label": {"type": "plain_text", "text": "📍 1. 저장 위치 (최상위)"}
+        },
+        {
+            "type": "input",
+            "block_id": "project_type_block",
             "dispatch_action": True,
             "element": {
                 "type": "static_select",
                 "action_id": "project_type_select",
                 "placeholder": {"type": "plain_text", "text": "분야를 선택하세요"},
-                "options": options,
-                **({"initial_option": initial_option} if initial_option else {})
+                "options": type_options,
+                **({"initial_option": initial_type_opt} if initial_type_opt else {})
             },
-            "label": {"type": "plain_text", "text": "📂 분야 선택 (순번 스캔)"}
+            "label": {"type": "plain_text", "text": "📂 2. 분야 선택 (순번 스캔)"}
         },
         {
             "type": "input",
-            "block_id": "block_id",
+            "block_id": "project_id_block",
             "element": {
                 "type": "plain_text_input",
                 "action_id": "project_id_input",
                 "initial_value": suggested_id,
-                "placeholder": {"type": "plain_text", "text": "YY-CodeSN (자동 제안됨)"}
+                "placeholder": {"type": "plain_text", "text": "YY-CodeSN (자동 제안)"}
             },
-            "label": {"type": "plain_text", "text": "🆔 프로젝트 ID"}
+            "label": {"type": "plain_text", "text": "🆔 3. 프로젝트 ID"}
         },
         {
             "type": "input",
-            "block_id": "block_name",
+            "block_id": "project_name_block",
             "element": {
                 "type": "plain_text_input",
                 "action_id": "project_name_input",
                 "initial_value": initial_name,
                 "placeholder": {"type": "plain_text", "text": "예: 이천시 장호원읍 도시재생"}
             },
-            "label": {"type": "plain_text", "text": "📝 프로젝트/용역 명칭"}
+            "label": {"type": "plain_text", "text": "📝 4. 프로젝트/용역 명칭"}
         }
     ]
     
     return {
         "type": "modal",
         "callback_id": "project_creation_submit",
+        "private_metadata": json.dumps(metadata),
         "title": {"type": "plain_text", "text": "나래공간 폴더 생성"},
         "submit": {"type": "plain_text", "text": "생성하기"},
         "close": {"type": "plain_text", "text": "취소"},

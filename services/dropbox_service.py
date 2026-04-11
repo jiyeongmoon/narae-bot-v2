@@ -36,34 +36,52 @@ class DropboxService:
                 return None
         return self.dbx
 
-    def get_next_id(self, p_type, year_str):
+    def get_next_id(self, p_type, year_str, root_override=None):
         """드롭박스 폴더를 스캔하여 다음 순번의 ID를 계산합니다."""
         dbx = self._get_client()
-        if not dbx: return f"{year_str}-{p_type}01" # 연결 실패 시 01 제안
+        if not dbx: return f"{year_str}-{p_type}01"
         
-        category_rel_path = CATEGORY_MAP.get(p_type, "")
-        if not category_rel_path: return ""
+        # 스캔 베이스 경로 결정
+        if root_override:
+            base_path = root_override
+        else:
+            base_path = CATEGORY_MAP.get(p_type, "")
+            
+        if not base_path: return f"{year_str}-{p_type}01"
         
         # 스캔 경로 설정
-        # v2.4 계층형과 레거시 플랫 경로 모두 확인하기 위해 여러 경로 탐색 가능
         scan_paths = []
-        
-        # 1. 신규 계층형 경로 (Category/Year 폴더 내부)
         year_folder = f"20{year_str}년"
-        if p_type == "PS":
-            scan_paths.append(f"/{category_rel_path}/{year_folder}")
-        elif p_type == "C":
-            scan_paths.append(f"/{category_rel_path}")
+        
+        # 1. 지정된 루트 하위의 연도 폴더 (신규 계층형)
+        if root_override:
+            # 루트가 직접 지정된 경우, 그 아래의 CATEGORY 명칭을 찾아서 들어감
+            cat_suffix = CATEGORY_MAP.get(p_type, "").split("/")[-1]
+            if p_type == "PS": # Sales는 연도 폴더가 바로 아래
+                scan_paths.append(f"/{root_override}/{year_folder}")
+            elif p_type == "C": # Admin은 연도 구분 없음
+                scan_paths.append(f"/{root_override}")
+            else:
+                scan_paths.append(f"/{root_override}/{cat_suffix}/{year_folder}")
         else:
-            scan_paths.append(f"/{category_rel_path}/{year_folder}")
+            # 기본 맵 기반 경로
+            if p_type == "PS":
+                scan_paths.append(f"/{base_path}/{year_folder}")
+            elif p_type == "C":
+                scan_paths.append(f"/{base_path}")
+            else:
+                scan_paths.append(f"/{base_path}/{year_folder}")
             
-        # 2. 레거시 경로 (01_프로젝트_실무_산출물)
+        # 2. 레거시 경로 추가 스캔
         scan_paths.append("/01_프로젝트_실무_산출물")
         
         max_sn = 0
         pattern = rf"^{re.escape(year_str)}[\-]{re.escape(p_type)}(\d+)"
         
+        processed_paths = set()
         for path in scan_paths:
+            if path in processed_paths or not path: continue
+            processed_paths.add(path)
             try:
                 res = dbx.files_list_folder(path)
                 for entry in res.entries:
@@ -73,15 +91,12 @@ class DropboxService:
                             sn = int(match.group(1))
                             if sn > max_sn: max_sn = sn
             except ApiError as e:
-                # 폴더가 없는 경우(신규 연도 등)는 무시
-                if e.error.is_path() and e.error.get_path().is_not_found():
-                    continue
-                logger.warning(f"Dropbox 스캔 실패 ({path}): {e}")
+                continue
         
         next_sn = max_sn + 1
         return f"{year_str}-{p_type}{next_sn:02d}"
 
-    def create_project_folders(self, p_id, p_name, p_type):
+    def create_project_folders(self, p_id, p_name, p_type, root_override=None):
         """SOP v2.4에 맞춰 드롭박스 클라우드에 폴더를 생성합니다."""
         dbx = self._get_client()
         if not dbx: return False, "드롭박스 연결 실패"
@@ -91,14 +106,19 @@ class DropboxService:
         year_str = year_match.group(1) if year_match else datetime.now().strftime("%y")
         year_folder = f"20{year_str}년"
         
-        category_rel_path = CATEGORY_MAP.get(p_type, "")
-        
-        if p_type == "PS":
-            parent_path = f"/{category_rel_path}/{year_folder}"
-        elif p_type == "C":
-            parent_path = f"/{category_rel_path}"
+        if root_override:
+            cat_suffix = CATEGORY_MAP.get(p_type, "").split("/")[-1]
+            if p_type == "PS":
+                parent_path = f"/{root_override}/{year_folder}"
+            elif p_type == "C":
+                parent_path = f"/{root_override}"
+            else:
+                parent_path = f"/{root_override}/{cat_suffix}/{year_folder}"
         else:
-            parent_path = f"/{category_rel_path}/{year_folder}"
+            category_rel_path = CATEGORY_MAP.get(p_type, "")
+            if p_type == "PS": parent_path = f"/{category_rel_path}/{year_folder}"
+            elif p_type == "C": parent_path = f"/{category_rel_path}"
+            else: parent_path = f"/{category_rel_path}/{year_folder}"
             
         project_path = f"{parent_path}/{p_id}_{p_name}"
         
@@ -111,7 +131,7 @@ class DropboxService:
             for sub in sub_folders:
                 dbx.files_create_folder_v2(f"{project_path}/{sub}")
                 
-            # 4. 공유 링크 생성 (선택 사항)
+            # 4. 공유 링크 생성
             shared_link = ""
             try:
                 link_res = dbx.sharing_create_shared_link_with_settings(project_path)
