@@ -69,16 +69,19 @@ def launch_proposal():
             <title>나래 제안서 시스템 런처</title>
             <meta charset="utf-8">
         </head>
-        <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc;">
-            <h2 style="color: #1e293b;">🚀 제안서 시스템을 실행하는 중입니다...</h2>
-            <p style="color: #475569;">브라우저 상단에서 <b>'narae-proposal 열기'</b>를 허용해 주세요.</p>
+        <body style="font-family: 'Pretendard', sans-serif; text-align: center; padding: 100px; background: #f8fafc;">
+            <h1 style="color: #0f172a; font-size: 24px; margin-bottom: 20px;">🚀 로컬 제안서 시스템 연결</h1>
+            <p style="color: #475569; font-size: 16px; margin-bottom: 40px;">
+                브라우저 보안 정책으로 인해 자동 실행이 차단되었을 수 있습니다.<br>
+                아래 버튼을 한 번 더 클릭하여 시스템을 실행해 주세요.
+            </p>
+            <a href="narae-proposal://launch" 
+               style="padding: 15px 40px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 800; font-size: 18px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+               🖥️ 시스템 직접 켜기
+            </a>
             <script>
-                // 접속 즉시 로컬 프로토콜 호출
+                // 접속 즉시 한 번 시도
                 window.location.href = "narae-proposal://launch";
-                // 2초 뒤 창 자동 닫기 시도 (일부 브라우저 제한 있을 수 있음)
-                setTimeout(function() {
-                    window.close();
-                }, 2000);
             </script>
         </body>
     </html>
