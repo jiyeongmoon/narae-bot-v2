@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime
+import urllib.parse
 import dropbox
 from dropbox.exceptions import ApiError
 from config import (
@@ -129,13 +130,16 @@ class DropboxService:
             for sub in sub_folders:
                 dbx.files_create_folder_v2(f"{project_path}/{sub}")
                 
-            # 4. 공유 링크 생성
+            # 4. 공유 링크 (또는 다이렉트 웹 링크) 생성
             shared_link = ""
             try:
                 link_res = dbx.sharing_create_shared_link_with_settings(project_path)
                 shared_link = link_res.url
-            except:
-                pass
+            except Exception as e:
+                # 권한(Team Folder 제한) 등의 이슈로 공유 링크 생성이 거부될 경우 Fallback 처리
+                logger.warning(f"공유 링크 생성 실패 (Fallback 웹 링크로 대체): {e}")
+                encoded_path = urllib.parse.quote(project_path)
+                shared_link = f"https://www.dropbox.com/work{encoded_path}"
                 
             return True, {"path": project_path, "link": shared_link}
             
