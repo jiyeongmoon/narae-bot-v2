@@ -218,3 +218,46 @@ def register_commands(app):
 
         import threading
         threading.Thread(target=_fetch_and_respond).start()
+
+    @app.command("/제안서")
+    def handle_proposal_command(ack, body, client, logger):
+        """슬랙에서 윈도우 로컬 제안서 시스템을 즉시 호출하는 커스텀 링크(narae-proposal://) 제공"""
+        ack()
+        user_id = body["user_id"]
+        logger.info(f"/제안서 요청: {user_id}")
+
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "🚀 *제안서 자동화 시스템*\n내 PC에 마련된 전용 제안서 작성 시스템을 호출합니다.\n(⚠️ 최초 1회 `슬랙연동_레지스트리_등록.bat` 실행 필수)"
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "🖥️ 통홥 제안서 시스템 실행하기",
+                            "emoji": True
+                        },
+                        "style": "primary",
+                        "url": "narae-proposal://launch",
+                        "action_id": "launch_proposal_app_btn"
+                    }
+                ]
+            }
+        ]
+
+        try:
+            client.chat_postMessage(
+                channel=user_id,
+                text="제안서 시스템 컨트롤",
+                blocks=blocks
+            )
+        except Exception as e:
+            logger.error(f"/제안서 에러: {e}")
+            client.chat_postMessage(channel=user_id, text=f"오류: {e}")
