@@ -32,20 +32,15 @@ def register_project_handlers(app):
         view_id = body["view"]["id"]
         view_state = body["view"]["state"]["values"]
         
-        # 현재 선택된 값들 추출
-        selected_type = (view_state.get("project_type_block", {})
-                         .get("project_type_select", {})
-                         .get("selected_option", {})
-                         .get("value"))
+        # 현재 선택된 값들 추출 (Null-safe)
+        type_opt = view_state.get("project_type_block", {}).get("project_type_select", {}).get("selected_option")
+        selected_type = type_opt.get("value") if type_opt else None
         
-        selected_root = (view_state.get("project_root_block", {})
-                         .get("project_root_select", {})
-                         .get("selected_option", {})
-                         .get("value"))
+        root_opt = view_state.get("project_root_block", {}).get("project_root_select", {}).get("selected_option")
+        selected_root = root_opt.get("value") if root_opt else None
                          
-        current_name = (view_state.get("project_name_block", {})
-                        .get("project_name_input", {})
-                        .get("value") or "")
+        name_input = view_state.get("project_name_block", {}).get("project_name_input", {})
+        current_name = name_input.get("value") or ""
         
         # 현재 연도 (2자리)
         curr_year = datetime.now().strftime("%y")
