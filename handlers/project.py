@@ -109,14 +109,9 @@ def register_project_handlers(app):
                 path = result["path"]
                 link = result["link"]
                 
-                # 윈도우 로컬 경로로 변환
-                win_path = path.replace('/', '\\')
-                local_path = f"%USERPROFILE%\\공간환경계획연구실 Dropbox{win_path}"
-                
-                msg_content = f"✅ *폴더 생성 완료!*\n• *ID*: `{p_id}`\n• *명칭*: {p_name}"
-                msg_content += f"\n\n💻 *내 PC에서 열기 (아래 경로를 복사 후 탐색기에 붙여넣기)*\n`{local_path}`"
+                msg_content = f"✅ *폴더 생성 완료!*\n• *ID*: `{p_id}`\n• *명칭*: {p_name}\n• *위치*: `{path}`"
                 if link:
-                    msg_content += f"\n\n🌐 <{link}|드롭박스 웹에서 확인하기>"
+                    msg_content += f"\n\n🌐 <{link}|드롭박스 화면에서 바로 열기>"
                     
                 client.chat_postMessage(channel=user_id, text=msg_content)
             else:
