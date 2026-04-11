@@ -211,9 +211,9 @@ def build_project_creation_modal(selected_type=None, selected_root=None, suggest
                 "type": "plain_text_input",
                 "action_id": "project_name_input",
                 "initial_value": initial_name,
-                "placeholder": {"type": "plain_text", "text": "예: 이천시 장호원읍 도시재생"}
+                "placeholder": {"type": "plain_text", "text": "예: 청주시 영운동 활성화계획 변경"}
             },
-            "label": {"type": "plain_text", "text": "📝 4. 프로젝트/용역 명칭"}
+            "label": {"type": "plain_text", "text": "📝 4. 명칭 (반드시 '시군구 읍면동 사업명' 형식으로 작성)"}
         }
     ]
     
