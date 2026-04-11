@@ -261,3 +261,10 @@ def register_commands(app):
         except Exception as e:
             logger.error(f"/제안서 에러: {e}")
             client.chat_postMessage(channel=user_id, text=f"오류: {e}")
+
+    @app.action("launch_proposal_app_btn")
+    def handle_launch_proposal_app_btn(ack, body, logger):
+        """제안서 버튼 클릭 시 발생하는 액션 이벤트를 아무 동작 없이 즉시 ack 처리하여 경고 아이콘(⚠️) 방지"""
+        ack()
+        logger.info(f"로컬 제안서 시스템 링크 버튼 클릭됨: {body.get('user', {}).get('id')}")
+
