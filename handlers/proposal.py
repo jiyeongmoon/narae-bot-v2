@@ -98,14 +98,11 @@ def _build_proposal_modal(project_list: list[dict], selected_root: str = "01_프
     """제안서 초안 생성 Slack 모달 빌드"""
 
     MODEL_OPTIONS = [
-        {"text": {"type": "plain_text", "text": "gemini-3.1-flash-lite-preview"}, "value": "gemini-3.1-flash-lite-preview"},
-        {"text": {"type": "plain_text", "text": "gemini-3-flash-preview"},      "value": "gemini-3-flash-preview"},
-        {"text": {"type": "plain_text", "text": "gemini-2.5-flash"},            "value": "gemini-2.5-flash"},
-        {"text": {"type": "plain_text", "text": "gemini-2.5-pro"},              "value": "gemini-2.5-pro"},
-        {"text": {"type": "plain_text", "text": "gemini-2.0-flash"},            "value": "gemini-2.0-flash"},
-        {"text": {"type": "plain_text", "text": "gemini-1.5-pro"},              "value": "gemini-1.5-pro"},
+        {"text": {"type": "plain_text", "text": "gemini-2.0-flash-exp"},  "value": "gemini-2.0-flash-exp"},
+        {"text": {"type": "plain_text", "text": "gemini-1.5-pro"},        "value": "gemini-1.5-pro"},
+        {"text": {"type": "plain_text", "text": "gemini-1.5-flash"},      "value": "gemini-1.5-flash"},
     ]
-    default_model  = GEMINI_MODEL or "gemini-3-flash-preview"
+    default_model  = GEMINI_MODEL or "gemini-2.0-flash-exp"
     default_option = next(
         (o for o in MODEL_OPTIONS if o["value"] == default_model), MODEL_OPTIONS[0]
     )
