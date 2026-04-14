@@ -400,7 +400,7 @@ def update_task_risk(page_id: str, is_risk: bool) -> bool:
 
 def save_log(task_id, task_name, log_date, completed, tomorrow,
              consultation="", issues="", risk="", status_update="", author_slack="",
-             is_new_task=False):
+             is_new_task=False, manual_completed=""):
     log_db_id = ensure_log_db()
     if not log_db_id:
         logger.warning("일지 DB를 쓸 수 없으므로 중앙 DB 기록은 생략하고 Task 페이지에만 기록합니다.")
@@ -456,16 +456,28 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
         
         # ── To-do 블록 생성 ──────────────────────────────────────────────
         # • 새 Task: 완료(체크) + 내일예정(미체크) 모두 To-do 섹션에 삽입
-        # • 기존 Task: 내일예정(미체크)만 삽입 (완료항목은 모달 체크 선택으로 이미 처리, 중복 생성 방지)
+        # • 기존 Task: 내일예정(미체크) 및 수동으로 추가한 완료항목(manual_completed) 삽입 (기존 체크항목 중복 방지)
         todo_blocks = []
         if is_new_task and completed:
             for line in [l.strip() for l in completed.splitlines() if l.strip()]:
+                if line.startswith("• "): line = line[2:]
+                elif line.startswith("- "): line = line[2:]
+                todo_blocks.append({
+                    "object": "block", "type": "to_do",
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
+                })
+        elif not is_new_task and manual_completed:
+            for line in [l.strip() for l in manual_completed.splitlines() if l.strip()]:
+                if line.startswith("• "): line = line[2:]
+                elif line.startswith("- "): line = line[2:]
                 todo_blocks.append({
                     "object": "block", "type": "to_do",
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
                 })
         if tomorrow:
             for line in [l.strip() for l in tomorrow.splitlines() if l.strip()]:
+                if line.startswith("• "): line = line[2:]
+                elif line.startswith("- "): line = line[2:]
                 todo_blocks.append({
                     "object": "block", "type": "to_do",
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": False}

@@ -103,7 +103,18 @@ def register_messages(app):
                 "issues": "-",
                 "risk": "-",
             }
-            ok = append_daily_log(page_id, log, task_name=matched_name)
+            ok = append_daily_log(
+                task_id=page_id,
+                task_name=matched_name,
+                log_date=log["log_date"],
+                completed=log["completed"],
+                tomorrow=log["tomorrow"],
+                issues=log["issues"],
+                risk=log["risk"],
+                author_slack=log["author"],
+                is_new_task=is_new,
+                manual_completed=log["completed"]
+            )
 
             if ok:
                 # 성공: ✅ 이모지 (권한 없으면 무시) + 스레드 안내

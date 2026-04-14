@@ -319,6 +319,7 @@ def register_modals(app):
                     risk=log["risk"],
                     status_update=new_status or "",
                     author_slack=author_name,
+                    manual_completed=manual_completed,
                 )
 
             # 마지막 단계면 완료 메시지 발송
