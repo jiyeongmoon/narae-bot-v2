@@ -20,6 +20,7 @@ from handlers.modal import register_modals
 from handlers.options import register_options
 from handlers.message import register_messages
 from handlers.project import register_project_handlers
+from handlers.proposal import register_proposal_handlers  # ← 제안서 초안 자동화
 from services.scheduler import start_scheduler
 from services.notion import ensure_db_properties, ensure_log_db
 
@@ -50,6 +51,7 @@ register_modals(bolt_app)
 register_options(bolt_app)
 register_messages(bolt_app)
 register_project_handlers(bolt_app)
+register_proposal_handlers(bolt_app)  # ← 제안서 초안 자동화
 
 # ── 스케줄러 시작 ──────────────────────────────────────────────
 start_scheduler(bolt_app.client)
