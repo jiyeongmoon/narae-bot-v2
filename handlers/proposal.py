@@ -48,15 +48,44 @@ TRIGGER_DROPBOX_PATH = "/04_Knowledge_Base/00_Obsidian/moon/02_데이터_및_스
 # ── 프로젝트 목록 조회 ─────────────────────────────────────────────────
 
 def _get_project_list() -> list[dict]:
-    """PROPOSAL_BASE_DIR 내 프로젝트 폴더 목록 반환 (드롭다운용)"""
-    if not os.path.exists(PROPOSAL_BASE_DIR):
+    """프로젝트 폴더 목록 반환. 로컬 파일시스템 → Dropbox API 순으로 시도."""
+    # 1차: 로컬 파일시스템 (로컬 PC에서 실행 시)
+    if os.path.exists(PROPOSAL_BASE_DIR):
+        dirs = sorted(
+            [d for d in os.listdir(PROPOSAL_BASE_DIR)
+             if os.path.isdir(os.path.join(PROPOSAL_BASE_DIR, d))],
+            reverse=True
+        )
+        return [{"text": {"type": "plain_text", "text": d[:75]}, "value": d} for d in dirs[:100]]
+
+    # 2차: Dropbox API 폴백 (Railway 클라우드에서 실행 시)
+    if not DROPBOX_APP_KEY or not DROPBOX_REFRESH_TOKEN:
         return []
-    dirs = sorted(
-        [d for d in os.listdir(PROPOSAL_BASE_DIR)
-         if os.path.isdir(os.path.join(PROPOSAL_BASE_DIR, d))],
-        reverse=True
-    )
-    return [{"text": {"type": "plain_text", "text": d[:75]}, "value": d} for d in dirs[:100]]
+    try:
+        import dropbox as dbx_lib
+        dbx = dbx_lib.Dropbox(
+            app_key=DROPBOX_APP_KEY,
+            app_secret=DROPBOX_APP_SECRET,
+            oauth2_refresh_token=DROPBOX_REFRESH_TOKEN
+        )
+        try:
+            account_info = dbx.users_get_current_account()
+            root_ns = account_info.root_info.root_namespace_id
+            dbx = dbx.with_path_root(dbx_lib.common.PathRoot.root(root_ns))
+        except Exception:
+            pass
+        DROPBOX_PROJECTS_PATH = "/04_Knowledge_Base/00_Obsidian/moon/01_프로젝트_실무_산출물"
+        res = dbx.files_list_folder(DROPBOX_PROJECTS_PATH)
+        dirs = sorted(
+            [e.name for e in res.entries
+             if isinstance(e, dbx_lib.files.FolderMetadata)],
+            reverse=True
+        )
+        return [{"text": {"type": "plain_text", "text": d[:75]}, "value": d} for d in dirs[:100]]
+    except Exception as e:
+        import logging
+        logging.warning(f"[proposal] Dropbox 프로젝트 목록 조회 실패: {e}")
+        return []
 
 
 # ── 모달 빌드 ──────────────────────────────────────────────────────────
@@ -65,15 +94,16 @@ def _build_proposal_modal(project_list: list[dict]) -> dict:
     """제안서 초안 생성 Slack 모달 빌드"""
 
     MODEL_OPTIONS = [
+        {"text": {"type": "plain_text", "text": "gemini-2.5-pro (latest)"}, "value": "gemini-2.5-pro-preview-05-06"},
         {"text": {"type": "plain_text", "text": "gemini-2.5-pro-exp-03-25"}, "value": "gemini-2.5-pro-exp-03-25"},
-        {"text": {"type": "plain_text", "text": "gemini-2.0-flash-exp"},      "value": "gemini-2.0-flash-exp"},
+        {"text": {"type": "plain_text", "text": "gemini-2.5-flash (latest)"}, "value": "gemini-2.5-flash-preview-04-17"},
         {"text": {"type": "plain_text", "text": "gemini-2.0-flash"},          "value": "gemini-2.0-flash"},
+        {"text": {"type": "plain_text", "text": "gemini-2.0-flash-exp"},      "value": "gemini-2.0-flash-exp"},
         {"text": {"type": "plain_text", "text": "gemini-1.5-pro"},            "value": "gemini-1.5-pro"},
-        {"text": {"type": "plain_text", "text": "gemini-1.5-flash"},          "value": "gemini-1.5-flash"},
     ]
-    default_model  = GEMINI_MODEL or "gemini-2.0-flash-exp"
+    default_model  = GEMINI_MODEL or "gemini-2.5-pro-preview-05-06"
     default_option = next(
-        (o for o in MODEL_OPTIONS if o["value"] == default_model), MODEL_OPTIONS[1]
+        (o for o in MODEL_OPTIONS if o["value"] == default_model), MODEL_OPTIONS[0]
     )
 
     blocks = [
@@ -110,14 +140,18 @@ def _build_proposal_modal(project_list: list[dict]) -> dict:
         {
             "type": "input",
             "block_id": "context_block",
-            "label": {"type": "plain_text", "text": "✍️ 기획 컨텍스트 (기획 의도 또는 회의 내용)"},
+            "label": {"type": "plain_text", "text": "✍️ 추가 기획 컨텍스트 (선택)"},
+            "hint": {
+                "type": "plain_text",
+                "text": "06_회의록 폴더의 최신 파일은 항상 자동 참조됩니다. 여기에는 회의록 외 추가로 강조할 기획 의도나 전략 방향만 입력하세요."
+            },
             "element": {
                 "type": "plain_text_input",
                 "action_id": "context_input",
                 "multiline": True,
                 "placeholder": {
                     "type": "plain_text",
-                    "text": "예: 거점시설 중심 재생, 청년 유입 전략 강조...\n회의록 내용을 붙여넣어도 됩니다.\n(비워두면 06_회의록 폴더의 최신 파일을 자동 참조합니다.)"
+                    "text": "예: 거점시설 중심 재생, 청년 유입 전략 강조...\n(비워도 무방 — 회의록이 자동으로 포함됩니다)"
                 },
                 "min_length": 0
             },
