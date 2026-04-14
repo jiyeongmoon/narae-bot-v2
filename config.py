@@ -58,11 +58,29 @@ DROPBOX_APP_SECRET = os.environ.get("DROPBOX_APP_SECRET")
 DROPBOX_REFRESH_TOKEN = os.environ.get("DROPBOX_REFRESH_TOKEN")
 
 # 사업기획 파이프라인 프로젝트 기본 경로
-# (로컬 PC: 실제 Dropbox 경로 / Railway(클라우드): 더미값 → _get_project_list()가 빈 목록 반환)
 PROPOSAL_BASE_DIR = os.environ.get(
     "PROPOSAL_BASE_DIR",
     r"c:\Users\user\공간환경계획연구실 Dropbox\04_Knowledge_Base\00_Obsidian\moon\01_프로젝트_실무_산출물"
 )
+
+# 사업기획 루트 폴더 카테고리 정의
+PROPOSAL_ROOTS = {
+    "02_Active_Project": {
+        "name": "02_Active_Project (일반 용역)",
+        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\02_Active_Project",
+        "dropbox": "/02_Active_Project"
+    },
+    "03_Sales_Proposals": {
+        "name": "03_Sales_Proposals (제안서)",
+        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\03_Sales_Proposals",
+        "dropbox": "/03_Sales_Proposals"
+    },
+    "01_프로젝트_실무_산출물": {
+        "name": "01_프로젝트_실무_산출물 (테스트용)",
+        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\04_Knowledge_Base\00_Obsidian\moon\01_프로젝트_실무_산출물",
+        "dropbox": "/04_Knowledge_Base/00_Obsidian/moon/01_프로젝트_실무_산출물"
+    }
+}
 
 # ── 프로젝트 폴더 체계 (SOP v2.4) ──────────────────────────────
 # 사업팀 표준 7대 상위 폴더 (Active Project - 하위 폴더 없음)
