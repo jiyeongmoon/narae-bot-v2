@@ -190,6 +190,7 @@ def _parse_task(page: dict) -> dict:
     
     assignees = props.get(PROP["assignee"], {}).get("people", [])
     assignee_names = [p.get("name", "") for p in assignees]
+    assignee_ids = [p.get("id") for p in assignees if p.get("id")]
     
     client_raw = props.get(PROP["client"], {}).get("select")
     client = client_raw["name"] if client_raw else None
@@ -201,7 +202,10 @@ def _parse_task(page: dict) -> dict:
 
     return {
         "id": page["id"], "name": name, "deadline": deadline,
-        "status": status, "assignees": assignee_names, "url": page["url"],
+        "status": status, 
+        "assignees": assignee_names, 
+        "assignee_ids": assignee_ids,
+        "url": page["url"],
         "client": client,
         "phase": phase,
         "risk_flag": risk_flag,
@@ -227,8 +231,26 @@ def _get_user_info_from_db(name: str) -> dict:
         page = response["results"][0]
         props = page["properties"]
         db_name = props[PROP_USER["name"]]["title"][0]["plain_text"]
+        
+        # 호칭(별칭) 추출 및 분리
+        alias_list = props.get(PROP_USER["alias"], {}).get("rich_text", [])
+        alias_text = "".join(rt.get("plain_text", "") for rt in alias_list)
+        aliases = [db_name]
+        if alias_text:
+            # 쉼표나 공백으로 분리된 별칭들 추가
+            ext_aliases = [a.strip() for a in re.split(r'[,|/]', alias_text) if a.strip()]
+            aliases.extend(ext_aliases)
+        
         person_list = props[PROP_USER["person"]]["people"]
-        result = {"name": db_name, "aliases": [db_name], "person_id": person_list[0]["id"] if person_list else None}
+        if person_list:
+            p_name = person_list[0].get("name", "")
+            if p_name: aliases.append(p_name)
+            
+        result = {
+            "name": db_name, 
+            "aliases": list(set(aliases)), 
+            "person_id": person_list[0]["id"] if person_list else None
+        }
         cache_set(cache_key, result, ttl=300)
         return result
     except Exception: return {"name": name, "aliases": [name], "person_id": None}
@@ -238,6 +260,8 @@ def get_my_tasks(slack_display_name: str) -> list[dict]:
     try:
         user_info = _get_user_info_from_db(slack_display_name)
         my_keywords = [k.lower() for k in user_info["aliases"]]
+        my_person_id = user_info.get("person_id")
+        
         response = notion_client.databases.query(
             database_id=NOTION_TASK_DB_ID,
             filter=_build_active_task_filter(),
@@ -245,7 +269,13 @@ def get_my_tasks(slack_display_name: str) -> list[dict]:
         )
         tasks = [_parse_task(p) for p in response["results"]]
         for t in tasks:
-            t["is_assigned"] = any(any(kw in n.lower() for kw in my_keywords) for n in t.get("assignees", []))
+            # 1. ID 매칭 (최우선)
+            if my_person_id and my_person_id in t.get("assignee_ids", []):
+                t["is_assigned"] = True
+            else:
+                # 2. 이름/별칭 매칭 (Fallback)
+                t["is_assigned"] = any(any(kw in n.lower() for kw in my_keywords) for n in t.get("assignees", []))
+        
         return sorted(tasks, key=lambda x: not x["is_assigned"])
     except Exception: return []
 
