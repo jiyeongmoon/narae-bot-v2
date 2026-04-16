@@ -458,59 +458,60 @@ def update_task_participants(page_id: str, slack_display_name: str) -> bool:
 
 def _parse_daily_log_to_blocks(text: str) -> list:
     """데일리 로그 텍스트를 노션 블록 리스트로 변환합니다.
+
+    입력 규칙:
+      빈 줄           : 단락 구분 (current_top_bullet 초기화)
+      - text          : 서브 불릿 (직전 메인 불릿의 자식)
+      • text 또는 기타 : 메인 불릿 (bulleted_list_item)
     
-    지원 형식:
-      빈 줄          : 무시 (단락 구분)
-      • text / - text: 최상위 불릿 (들여쓰기 없음)
-        - text       : 서브 불릿 (앞에 공백 또는 탭이 있는 경우)
-      일반 텍스트    : paragraph 블록
+    예시 입력:
+      wwwww            → • wwwww (메인 불릿)
+      - ddffdf         →   - ddffdf (서브 불릿)
+      - dfdfdf         →   - dfdfdf (서브 불릿)
+      dfddth...        → • dfddth... (메인 불릿)
     """
     blocks = []
-    current_top_bullet = None  # 서브 불릿을 붙일 부모 참조
+    current_top_bullet = None
 
     for raw_line in text.splitlines():
         if not raw_line.strip():
             current_top_bullet = None
             continue
 
-        stripped = raw_line.lstrip()
-        indent = len(raw_line) - len(stripped)
-        is_bullet = stripped.startswith("\u2022 ") or stripped.startswith("- ") or stripped.startswith("* ")
+        stripped = raw_line.strip()
 
-        if is_bullet:
+        # - 로 시작하면 서브 불릿
+        if stripped.startswith("- "):
             content = stripped[2:].strip()
-            if indent == 0:
-                # 최상위 불릿
-                block = {
-                    "object": "block", "type": "bulleted_list_item",
-                    "bulleted_list_item": {
-                        "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
-                    }
+            sub = {
+                "object": "block", "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
                 }
-                blocks.append(block)
-                current_top_bullet = block
+            }
+            if current_top_bullet is not None:
+                current_top_bullet["bulleted_list_item"].setdefault("children", []).append(sub)
             else:
-                # 서브 불릿
-                sub = {
-                    "object": "block", "type": "bulleted_list_item",
-                    "bulleted_list_item": {
-                        "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
-                    }
-                }
-                if current_top_bullet is not None:
-                    parent_data = current_top_bullet["bulleted_list_item"]
-                    parent_data.setdefault("children", []).append(sub)
-                else:
-                    blocks.append(sub)
+                blocks.append(sub)
+
         else:
-            # 일반 텍스트 → 단락
-            current_top_bullet = None
-            blocks.append({
-                "object": "block", "type": "paragraph",
-                "paragraph": {"rich_text": [{"type": "text", "text": {"content": stripped[:2000]}}]}
-            })
+            # 일반 텍스트 또는 • 접두사 → 메인 불릿
+            if stripped.startswith("• "):
+                content = stripped[2:].strip()
+            else:
+                content = stripped
+            block = {
+                "object": "block", "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
+                }
+            }
+            blocks.append(block)
+            current_top_bullet = block
 
     return blocks
+
+
 
 
 def save_log(task_id, task_name, log_date, completed, todo_add,
