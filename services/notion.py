@@ -456,6 +456,63 @@ def update_task_participants(page_id: str, slack_display_name: str) -> bool:
         return False
 
 
+def _parse_daily_log_to_blocks(text: str) -> list:
+    """데일리 로그 텍스트를 노션 블록 리스트로 변환합니다.
+    
+    지원 형식:
+      빈 줄          : 무시 (단락 구분)
+      • text / - text: 최상위 불릿 (들여쓰기 없음)
+        - text       : 서브 불릿 (앞에 공백 또는 탭이 있는 경우)
+      일반 텍스트    : paragraph 블록
+    """
+    blocks = []
+    current_top_bullet = None  # 서브 불릿을 붙일 부모 참조
+
+    for raw_line in text.splitlines():
+        if not raw_line.strip():
+            current_top_bullet = None
+            continue
+
+        stripped = raw_line.lstrip()
+        indent = len(raw_line) - len(stripped)
+        is_bullet = stripped.startswith("\u2022 ") or stripped.startswith("- ") or stripped.startswith("* ")
+
+        if is_bullet:
+            content = stripped[2:].strip()
+            if indent == 0:
+                # 최상위 불릿
+                block = {
+                    "object": "block", "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
+                    }
+                }
+                blocks.append(block)
+                current_top_bullet = block
+            else:
+                # 서브 불릿
+                sub = {
+                    "object": "block", "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
+                    }
+                }
+                if current_top_bullet is not None:
+                    parent_data = current_top_bullet["bulleted_list_item"]
+                    parent_data.setdefault("children", []).append(sub)
+                else:
+                    blocks.append(sub)
+        else:
+            # 일반 텍스트 → 단락
+            current_top_bullet = None
+            blocks.append({
+                "object": "block", "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": stripped[:2000]}}]}
+            })
+
+    return blocks
+
+
 def save_log(task_id, task_name, log_date, completed, todo_add,
              consultation="", issues="", risk="", status_update="", author_slack="",
              is_new_task=False, daily_log=""):
@@ -482,11 +539,9 @@ def save_log(task_id, task_name, log_date, completed, todo_add,
             })
 
             if h == "📝 데일리 로그":
-                # 데일리 로그: 줄바꿈 그대로 단일 단락으로 기록
-                toggle_children.append({
-                    "object": "block", "type": "paragraph",
-                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": t[:2000]}}]}
-                })
+                # 데일리 로그: 마크다운 스타일 파싱 (불릿, 서브 불릿, 단락)
+                toggle_children.extend(_parse_daily_log_to_blocks(t))
+
             elif h in ("✅ 오늘 완료", "📌 To-do 추가"):
                 # 완료·To-do: 줄별 불릿 리스트
                 for line in t.splitlines():
