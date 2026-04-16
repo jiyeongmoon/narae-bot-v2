@@ -472,34 +472,43 @@ def save_log(task_id, task_name, log_date, completed, todo_add,
     try:
         toggle_children = []
         for h, t in [("✅ 오늘 완료", completed), ("📝 데일리 로그", daily_log), ("📌 To-do 추가", todo_add), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
-            if t:
-                if h in ("✅ 오늘 완료", "📝 데일리 로그", "📌 To-do 추가"):
-                    # 헤더는 독립된 단락으로 (줄바꿈 효과)
-                    toggle_children.append({
-                        "object": "block", "type": "paragraph",
-                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": h}, "annotations": {"bold": True}}]}
-                    })
-                    # 각 줄을 노션 불릿 리스트 블록으로 추가
-                    for line in t.splitlines():
-                        line = line.strip()
-                        if line:
-                            # 수동 입력된 불릿이나 모달에서 추가된 불릿 제거
-                            if line.startswith("• "): line = line[2:]
-                            elif line.startswith("- "): line = line[2:]
-                            
-                            toggle_children.append({
-                                "object": "block", "type": "bulleted_list_item",
-                                "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": line[:2000]}}]}
-                            })
-                else:
-                    # 기존 인라인 형식 유지 (협의, 이슈, 리스크)
-                    toggle_children.append({
-                        "object": "block", "type": "paragraph",
-                        "paragraph": {"rich_text": [
-                            {"type": "text", "text": {"content": f"{h}  "}, "annotations": {"bold": True}},
-                            {"type": "text", "text": {"content": t[:2000]}}
-                        ]}
-                    })
+            if not t:
+                continue
+
+            # 헤더 단락 추가 (공통)
+            toggle_children.append({
+                "object": "block", "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": h}, "annotations": {"bold": True}}]}
+            })
+
+            if h == "📝 데일리 로그":
+                # 데일리 로그: 줄바꿈 그대로 단일 단락으로 기록
+                toggle_children.append({
+                    "object": "block", "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": t[:2000]}}]}
+                })
+            elif h in ("✅ 오늘 완료", "📌 To-do 추가"):
+                # 완료·To-do: 줄별 불릿 리스트
+                for line in t.splitlines():
+                    line = line.strip()
+                    if line:
+                        if line.startswith("• "): line = line[2:]
+                        elif line.startswith("- "): line = line[2:]
+                        toggle_children.append({
+                            "object": "block", "type": "bulleted_list_item",
+                            "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": line[:2000]}}]}
+                        })
+            else:
+                # 협의, 이슈, 리스크: 인라인 단락 (헤더 단락 제거 후 합산)
+                toggle_children.pop()  # 위에서 추가한 헤더 단락 제거
+                toggle_children.append({
+                    "object": "block", "type": "paragraph",
+                    "paragraph": {"rich_text": [
+                        {"type": "text", "text": {"content": f"{h}  "}, "annotations": {"bold": True}},
+                        {"type": "text", "text": {"content": t[:2000]}}
+                    ]}
+                })
+
 
         # 로그 엔트리 제목 블록 (토글 적용)
         blocks = [
