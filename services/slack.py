@@ -349,21 +349,23 @@ def build_log_step_modal(metadata_json: str, task_name: str,
         ]
 
 
-    # 담당자 선택 블록 추가 (항상 표시하여 명시적 배정 유도)
-    assignee_block = [
-        {
-            "type": "input",
-            "block_id": "block_assignee",
-            "label": {"type": "plain_text", "text": "👤 담당자 지정"},
-            "hint": {"type": "plain_text", "text": "본인 또는 해당 업무의 담당자를 선택해 주세요."},
-            "element": {
-                "type": "users_select",
-                "action_id": "assignee_select",
-                "initial_user": user_id if user_id else None,
-                "placeholder": {"type": "plain_text", "text": "담당자 선택"},
+    # 담당자 선택 블록: 새 Task 생성 시에만 정의
+    assignee_block = []
+    if is_new:
+        assignee_block = [
+            {
+                "type": "input",
+                "block_id": "block_assignee",
+                "label": {"type": "plain_text", "text": "👤 담당자 지정"},
+                "hint": {"type": "plain_text", "text": "본인 또는 해당 업무의 담당자를 선택해 주세요."},
+                "element": {
+                    "type": "users_select",
+                    "action_id": "assignee_select",
+                    "initial_user": user_id if user_id else None,
+                    "placeholder": {"type": "plain_text", "text": "담당자 선택"},
+                }
             }
-        }
-    ]
+        ]
 
     header_text = f"*{task_name}* 업무의 일지를 작성합니다."
     if not is_new:
@@ -421,7 +423,7 @@ def build_log_step_modal(metadata_json: str, task_name: str,
         "blocks": [
             *task_info_block,
             *status_block,
-            *assignee_block,
+            *assignee_block, # is_new=True일 때만 데이터가 있음
             *new_task_blocks,
             {"type": "divider"},
             *([
@@ -609,96 +611,78 @@ def build_error_message(message: str) -> list:
 # 4. 주간 요약 메시지
 # ════════════════════════════════════════════════════════════
 
-def _group_by_person(tasks: list[dict]) -> dict[str, list]:
-    """담당자별 그룹화 (담당자 없으면 '미배정')."""
+def _group_by_log_author(logs: list[dict]) -> dict[str, list]:
+    """로그 작성자(실명)별로 데이터를 그룹화합니다."""
     grouped: dict[str, list] = {}
-    for task in tasks:
-        assignees = task.get("assignees") or []
-        if not assignees:
-            grouped.setdefault("미배정", []).append(task)
-        else:
-            for name in assignees:
-                grouped.setdefault(name, []).append(task)
+    for log in logs:
+        author = log.get("author", "알 수 없음")
+        grouped.setdefault(author, []).append(log)
     return grouped
 
 
-def _build_task_line(task: dict, today) -> str:
-    """Task 한 줄 요약 텍스트."""
-    import datetime
+def _build_log_line(log: dict) -> str:
+    """주간 요약용 개별 로그 라인 구성."""
+    task_name = log.get("task_name", "(제목 없음)")
+    task_url = log.get("task_url", "")
+    client = log.get("client", "")
+    status = log.get("status", "")
+    
+    name_link = f"<{task_url}|{task_name}>" if task_url else task_name
+    client_str = f"*{client}* | " if client else ""
+    status_str = f" ({status})" if status else ""
+    
+    lines = [f"• {client_str}{name_link}{status_str}"]
+    
+    # 과정 기록(오늘 완료) 추가
+    if log.get("completed"):
+        # 불릿 포인트가 너무 많으면 요약
+        comp = log["completed"].strip()
+        if len(comp) > 150: comp = comp[:147] + "..."
+        lines.append(f"> {comp}")
+        
+    return "\n".join(lines)
 
-    risk_flag = ""
-    if task.get("deadline"):
-        try:
-            dl = datetime.date.fromisoformat(task["deadline"])
-            if dl <= today + datetime.timedelta(days=7):
-                risk_flag = " 🚨"
-        except ValueError:
-            pass
 
-    client_str = f"{task['client']} | " if task.get("client") else ""
-    phase_str = f"{task['phase']} | " if task.get("phase") else ""
-    status_str = task["status"] if task.get("status") else ""
-    deadline_str = f" | ~{task['deadline']}" if task.get("deadline") else ""
-
-    notion_url = task.get("url", "")
-    name_link = f"<{notion_url}|{task['name']}>" if notion_url else task["name"]
-
-    return f"  {name_link}\n  {client_str}{phase_str}{status_str}{deadline_str}{risk_flag}"
-
-
-def build_weekly_summary_message(tasks: list[dict]) -> list:
+def build_weekly_summary_message(logs: list[dict]) -> list:
     """
-    담당자별 그룹화된 주간 요약 블록 빌더 (전체 공개용).
-    50블록 초과 시 truncate.
+    작성자별로 그룹화된 주간 요약 블록 빌더.
+    tasks 대신 logs 데이터를 직접 사용합니다.
     """
-    import datetime
-
-    if not tasks:
+    if not logs:
         return [{
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": "📊 *주간 요약*\n\n이번 주 업데이트된 Task가 없습니다."},
+                     "text": "📊 *주간 요약*\n\n이번 주 기록된 업무일지가 없습니다."},
         }]
 
-    grouped = _group_by_person(tasks)
-    today = datetime.date.today()
-
+    grouped = _group_by_log_author(logs)
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "📊 주간 요약"},
+            "text": {"type": "plain_text", "text": "📊 주간 요약 (인원별 수행 업무)"},
         },
         {
             "type": "context",
             "elements": [{"type": "mrkdwn",
-                          "text": f"이번 주 업데이트된 Task {len(tasks)}건"}],
+                          "text": f"이번 주 총 {len(logs)}건의 일지가 기록되었습니다."}],
         },
         {"type": "divider"},
     ]
 
-    for person, person_tasks in grouped.items():
+    for author, author_logs in grouped.items():
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": f"*👤 {person}* ({len(person_tasks)}건)"},
+                     "text": f"*👤 {author}* ({len(author_logs)}건)"},
         })
 
-        for task in person_tasks:
+        # 동일한 업무에 여러 로그가 있을 수 있으므로 태스크별로 한 번 더 묶어주면 좋음
+        # 여기서는 단순 나열하되, 가독성을 위해 간결하게 처리
+        for log in author_logs:
             blocks.append({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": _build_task_line(task, today)},
+                "text": {"type": "mrkdwn", "text": _build_log_line(log)},
             })
-
-            weekly_logs = task.get("weekly_logs", [])
-            if weekly_logs:
-                recent = weekly_logs[-2:]
-                log_text = "\n".join(f"  • {log.split(chr(10))[0]}" for log in recent)
-                if len(log_text) > 400:
-                    log_text = log_text[:397] + "..."
-                blocks.append({
-                    "type": "context",
-                    "elements": [{"type": "mrkdwn", "text": log_text}],
-                })
 
         blocks.append({"type": "divider"})
 
@@ -706,7 +690,7 @@ def build_weekly_summary_message(tasks: list[dict]) -> list:
             blocks.append({
                 "type": "context",
                 "elements": [{"type": "mrkdwn",
-                              "text": "⚠️ 요약이 너무 길어 일부를 생략했습니다."}],
+                              "text": "⚠️ 내용이 너무 길어 일부를 생략했습니다."}],
             })
             break
 

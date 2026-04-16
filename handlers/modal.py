@@ -15,11 +15,9 @@ from services.notion import (
     create_task,
     get_notion_user_id,
     get_task_todos,
-    update_todo_checked,
+    delete_todo_block,
     replace_text_pattern_todos,
     update_task_status,
-    update_task_assignee,
-    update_task_assignee_by_notion_id,
     CLIENT_TO_PREFIX,
 )
 from services.slack import (
@@ -187,15 +185,16 @@ def register_modals(app):
             logger.error(f"진행 알림 발송 실패: {pe}")
 
         try:
-            # 선택된 담당자 정보
-            selected_assignee_id = get_user_select("block_assignee", "assignee_select")
-            target_user_id = selected_assignee_id or user_id
-
-            try:
-                target_info = client.users_info(user=target_user_id)
-                target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
-            except Exception:
-                target_name = ""
+            # 선택된 담당자 정보 (새 Task 생성 시에만 읽음 — 기존 Task 담당자 변경 차단)
+            target_name = ""
+            if is_new:
+                selected_assignee_id = get_user_select("block_assignee", "assignee_select")
+                target_user_id = selected_assignee_id or user_id
+                try:
+                    target_info = client.users_info(user=target_user_id)
+                    target_name = target_info["user"]["profile"].get("real_name", "") or target_info["user"].get("name", "")
+                except Exception:
+                    target_name = ""
 
             # 일지 작성자 정보
             try:
@@ -279,15 +278,8 @@ def register_modals(app):
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]
             else:
-                # 1. 상태/담당자 업데이트 (Notion User ID 직접 사용)
+                # 1. 상태 업데이트 (담당자 자동 업데이트 로직 제거)
                 if new_status: update_task_status(task_id, new_status)
-                if selected_assignee_id:
-                    notion_uid = get_notion_user_id(target_name)
-                    if notion_uid:
-                        update_task_assignee_by_notion_id(task_id, notion_uid)
-                    else:
-                        # fallback: 이름 기반 매칭 시도
-                        update_task_assignee(task_id, target_name)
                 
                 # 2. To-do 처리 (기존 Task만, 새 Task는 생략)
                 if not is_new:
@@ -295,15 +287,14 @@ def register_modals(app):
                         all_todos_now = get_task_todos(task_id)
                         c_ids = checked_todo_ids or set()
 
-                        # 2-a. 진짜 Notion to_do 블록: 체크된 것만 checked=True 업데이트
+                        # 2-a. 진짜 Notion to_do 블록: 완료된 항목은 섹션에서 삭제
+                        #      (삭제 후 로그 본문에만 텍스트로 기록됨)
                         for todo in all_todos_now:
                             if todo["block_type"] == "to_do" and todo["id"] in c_ids and not todo.get("checked"):
-                                update_todo_checked(todo["id"], True)
+                                delete_todo_block(todo["id"])
 
-                        # 2-b. text_pattern(- [ ] 텍스트) 블록 전체를 실제 to_do 블록으로 교체
-                        #      - 체크된 항목: 텍스트 블록 삭제 (이미 '오늘 완료' 로그에 반영)
-                        #      - 미체크 항목: 텍스트 블록 삭제 → 새 to_do 블록 삽입
-                        replace_text_pattern_todos(task_id, all_todos_now, c_ids)
+                        # 2-b. text_pattern(- [ ] 텍스트) 블록 → 체크된 항목 삭제, 미체크 항목만 to_do로 변환
+                        replace_text_pattern_todos(task_id, all_todos_now, c_ids, author_name)
                     except Exception as te:
                         logger.warning(f"To-do 업데이트 무시됨: {te}")
 

@@ -27,6 +27,7 @@ PROP = {
     "client":    "발주처",
     "phase":     "현재단계",
     "risk_flag": "마감리스크",
+    "participants": "참여자",
 }
 
 PROP_USER = {
@@ -114,6 +115,8 @@ def ensure_db_properties():
                 updates[prop_name] = {"select": {"options": [{"name": o} for o in options]}}
         if PROP["risk_flag"] not in existing:
             updates[PROP["risk_flag"]] = {"checkbox": {}}
+        if PROP["participants"] not in existing:
+            updates[PROP["participants"]] = {"people": {}}
         if updates:
             notion_client.databases.update(database_id=NOTION_TASK_DB_ID, properties=updates)
     except Exception as e:
@@ -427,6 +430,31 @@ def update_task_risk(page_id: str, is_risk: bool) -> bool:
         logger.error(f"마감리스크 업데이트 실패: {e}")
         return False
 
+def update_task_participants(page_id: str, slack_display_name: str) -> bool:
+    """일지 작성자를 Task의 '참여자' 목록에 자동으로 누적 추가합니다."""
+    try:
+        user_id = get_notion_user_id(slack_display_name)
+        if not user_id: return False
+
+        # 기존 참여자 조회
+        page = notion_client.pages.retrieve(page_id=page_id)
+        current_participants = page["properties"].get(PROP["participants"], {}).get("people", [])
+        
+        current_ids = [p["id"] for p in current_participants]
+        if user_id in current_ids:
+            return True # 이미 참여자에 포함됨
+            
+        new_ids = current_ids + [user_id]
+        notion_client.pages.update(
+            page_id=page_id, 
+            properties={PROP["participants"]: {"people": [{"id": uid} for uid in new_ids]}}
+        )
+        logger.info(f"참여자 추가 성공: {slack_display_name} -> {page_id}")
+        return True
+    except Exception as e:
+        logger.error(f"참여자 업데이트 실패: {e}")
+        return False
+
 
 def save_log(task_id, task_name, log_date, completed, tomorrow,
              consultation="", issues="", risk="", status_update="", author_slack="",
@@ -437,7 +465,9 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
 
     display_author = author_slack
     uinfo = cache_get("users_info")
-    if uinfo and author_slack in uinfo: display_author = uinfo[author_slack]["name"]
+    if uinfo and author_slack in uinfo: 
+        display_author = uinfo[author_slack]["name"]
+    author_name = display_author # 실명 표기용
 
     try:
         toggle_children = []
@@ -484,9 +514,8 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             }
         ]
         
-        # ── To-do 블록 생성 ──────────────────────────────────────────────
-        # • 새 Task: 완료(체크) + 내일예정(미체크) 모두 To-do 섹션에 삽입
-        # • 기존 Task: 내일예정(미체크) 및 수동으로 추가한 완료항목(manual_completed) 삽입 (기존 체크항목 중복 방지)
+        # • 새 Task만: 완료(체크) 항목을 To-do 섹션에 삽입
+        # • 기존 Task는 본문에 로그만 남기고 To-do 생성은 하지 않음 (사용자 요청: 과정만 기록)
         todo_blocks = []
         if is_new_task and completed:
             for line in [l.strip() for l in completed.splitlines() if l.strip()]:
@@ -496,21 +525,17 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
                     "object": "block", "type": "to_do",
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
                 })
-        elif not is_new_task and manual_completed:
-            for line in [l.strip() for l in manual_completed.splitlines() if l.strip()]:
-                if line.startswith("• "): line = line[2:]
-                elif line.startswith("- "): line = line[2:]
-                todo_blocks.append({
-                    "object": "block", "type": "to_do",
-                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
-                })
+        # 기존 Task의 manual_completed에 의한 to_do_blocks 생성부 삭제
         if tomorrow:
             for line in [l.strip() for l in tomorrow.splitlines() if l.strip()]:
                 if line.startswith("• "): line = line[2:]
                 elif line.startswith("- "): line = line[2:]
+                
+                # 생성 시 실명 표기 추가 (예: 업무명 (문지영))
+                todo_text = f"{line} ({author_name})"
                 todo_blocks.append({
                     "object": "block", "type": "to_do",
-                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": False}
+                    "to_do": {"rich_text": [{"type": "text", "text": {"content": todo_text}}], "checked": False}
                 })
 
         def _append_log_blocks(target_id):
@@ -569,7 +594,8 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
                 logger.error(f"Task 상세 페이지 기록 실패: {e}")
 
         if status_update: update_task_status(task_id, status_update)
-        if author_slack: update_task_assignee(task_id, author_slack)
+        # 담당자 보호 강화: 담당자는 편집하지 않고, 일지 작성자를 '참여자'로 자동 등록
+        if author_slack: update_task_participants(task_id, author_slack)
         if risk: update_task_risk(task_id, True)
 
         return {"id": page_id or task_id, "url": page_url or f"https://notion.so/{task_id.replace('-', '')}"}
@@ -603,8 +629,11 @@ def get_task_todos(task_id: str) -> list[dict]:
     return _fetch(task_id)
 
 
-def update_todo_checked(block_id: str, checked: bool) -> bool:
+def update_todo_checked(block_id: str, checked: bool, author_name: str = "") -> bool:
+    """체크박스 상태를 업데이트하며, 체크 시 작성자 이름을 텍스트 뒤에 추가/삭제합니다."""
     try:
+        tag = f" ({author_name})" if author_name else ""
+        
         if "::line_" in block_id:
             bid, lstr = block_id.split("::line_")
             lidx = int(lstr)
@@ -612,22 +641,94 @@ def update_todo_checked(block_id: str, checked: bool) -> bool:
             bt = b.get("type", "")
             rts = b.get(bt, {}).get("rich_text", [])
             for rt in rts:
-                lns = rt.get("text", {}).get("content", "").splitlines(keepends=True)
+                content = rt.get("text", {}).get("content", "")
+                lns = content.splitlines(keepends=True)
                 for i, ln in enumerate(lns):
                     if i == lidx:
-                        if checked: ln = ln.replace("- [ ]", "- [o]").replace("- [x]", "- [o]")
-                        else: ln = ln.replace("- [o]", "- [ ]").replace("- [x]", "- [ ]")
+                        if checked:
+                            # 체크 시: - [ ] -> - [o] 및 이름 추가
+                            ln = ln.replace("- [ ]", "- [o]").replace("- [x]", "- [o]")
+                            if tag and tag not in ln:
+                                ln = ln.rstrip() + tag + "\n"
+                        else:
+                            # 체크 해제 시: - [o] -> - [ ] 및 이름 삭제
+                            ln = ln.replace("- [o]", "- [ ]").replace("- [x]", "- [ ]")
+                            if tag:
+                                ln = ln.replace(tag, "")
                         lns[i] = ln
                 rt["text"]["content"] = "".join(lns)
                 rt.pop("plain_text", None)
             notion_client.blocks.update(block_id=bid, **{bt: {"rich_text": rts}})
             return True
-        notion_client.blocks.update(block_id=block_id, **{"to_do": {"checked": checked}})
+
+        # 실제 to_do 블록 처리
+        if checked:
+            # 체크 시 텍스트 업데이트 후 체크 상태 변경
+            try:
+                b = notion_client.blocks.retrieve(block_id=block_id)
+                rts = b.get("to_do", {}).get("rich_text", [])
+                if rts:
+                    content = rts[0].get("text", {}).get("content", "")
+                    if tag and tag not in content:
+                        rts[0]["text"]["content"] = content + tag
+                        notion_client.blocks.update(block_id=block_id, to_do={"rich_text": rts})
+            except: pass
+            notion_client.blocks.update(block_id=block_id, to_do={"checked": True})
+        else:
+            # 체크 해제 시 이름 삭제 시도 후 체크 해제
+            try:
+                b = notion_client.blocks.retrieve(block_id=block_id)
+                rts = b.get("to_do", {}).get("rich_text", [])
+                if rts and tag:
+                    content = rts[0].get("text", {}).get("content", "")
+                    if tag in content:
+                        rts[0]["text"]["content"] = content.replace(tag, "")
+                        notion_client.blocks.update(block_id=block_id, to_do={"rich_text": rts})
+            except: pass
+            notion_client.blocks.update(block_id=block_id, to_do={"checked": False})
         return True
-    except Exception: return False
+    except Exception as e:
+        logger.error(f"To-do 체크 업데이트 실패: {e}")
+        return False
 
 
-def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) -> bool:
+def delete_todo_block(block_id: str) -> bool:
+    """완료된 To-do 블록을 노션 섹션에서 삭제합니다.
+    
+    text_pattern(- [ ] 텍스트) 타입은 실제 블록 삭제가 아닌 라인 제거로 처리합니다.
+    실제 to_do 블록 타입은 blocks.delete API로 제거합니다.
+    """
+    try:
+        if "::line_" in block_id:
+            # text_pattern: 해당 라인만 텍스트에서 제거
+            bid, lstr = block_id.split("::line_")
+            lidx = int(lstr)
+            b = notion_client.blocks.retrieve(block_id=bid)
+            bt = b.get("type", "")
+            rts = b.get(bt, {}).get("rich_text", [])
+            for rt in rts:
+                content = rt.get("text", {}).get("content", "")
+                lines = content.splitlines(keepends=True)
+                if 0 <= lidx < len(lines):
+                    lines.pop(lidx)
+                new_content = "".join(lines).strip()
+                if new_content:
+                    rt["text"]["content"] = new_content
+                    rt.pop("plain_text", None)
+                    notion_client.blocks.update(block_id=bid, **{bt: {"rich_text": rts}})
+                else:
+                    # 라인이 없으면 블록 자체 삭제
+                    notion_client.blocks.delete(block_id=bid)
+        else:
+            # 실제 to_do 블록 삭제
+            notion_client.blocks.delete(block_id=block_id)
+        return True
+    except Exception as e:
+        logger.error(f"To-do 블록 삭제 실패 ({block_id}): {e}")
+        return False
+
+
+def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set, author_name: str = "") -> bool:
     """- [ ] 텍스트 형식 to-do를 실제 Notion to_do 블록으로 교체합니다. (Make & 나래봇 공용)
     
     1. 원본 블록 내 할 일 텍스트 외의 내용(예: 'To-do :' 헤더)이 있으면 해당 텍스트만 업데이트하여 보존합니다.
@@ -674,22 +775,26 @@ def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set) 
 
         # 3. 최적의 삽입 위치 탐색 (To-do 섹션 찾기)
         if text_pattern_todos:
-            # 체크/미체크 모두 수집
-            todos_to_convert = []
+            # 미체크 항목만 To-do 블록으로 변환 (완료 항목은 원본 삭제로 처리 완료)
+            tag = f" ({author_name})" if author_name else ""
+            new_todo_blocks = []
             for t in text_pattern_todos:
-                todos_to_convert.append({
-                    "text": t["text"],
-                    "checked": t["id"] in checked_ids
+                if t["id"] in checked_ids:
+                    continue  # 완료 항목 → 블록 변환 없이 건너뜀
+
+                text = t["text"]
+                if tag and tag not in text:
+                    text += tag
+
+                new_todo_blocks.append({
+                    "object": "block", "type": "to_do",
+                    "to_do": {
+                        "rich_text": [{"type": "text", "text": {"content": text}}],
+                        "checked": False
+                    }
                 })
 
-            new_todo_blocks = [
-                {
-                    "object": "block", "type": "to_do", 
-                    "to_do": {"rich_text": [{"type": "text", "text": {"content": item["text"]}}], "checked": item["checked"]}
-                }
-                for item in todos_to_convert
-            ]
-            
+
             # 페이지 전체를 훑으며 'To-do' 앵커 찾기 (재귀 탐색)
             insert_point = {"parent_id": task_id, "after_id": None}
             
@@ -830,6 +935,61 @@ def get_deadline_risk_tasks() -> list[dict]:
 
             t["risk_content"] = content
         return tasks
+def get_weekly_logs() -> list[dict]:
+    """최근 7일간 일지 DB(Log DB)에 작성된 모든 일지를 수집합니다."""
+    log_db_id = ensure_log_db()
+    if not log_db_id: return []
+    try:
+        ago = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        response = notion_client.databases.query(
+            database_id=log_db_id,
+            filter={"property": "날짜", "date": {"on_or_after": ago}},
+            sorts=[{"property": "날짜", "direction": "descending"}]
+        )
+        logs = []
+        for page in response["results"]:
+            props = page["properties"]
+            
+            # 작성자 (People 속성)
+            people = props.get("작성자", {}).get("people", [])
+            author_name = people[0].get("name", "알 수 없음") if people else "알 수 없음"
+            
+            # 연결된 Task 정보 (Relation)
+            task_ids = [r["id"] for r in props.get("연결Task", {}).get("relation", [])]
+            task_name = "(연결된 업무 없음)"
+            task_url = ""
+            status = ""
+            client = ""
+            
+            if task_ids:
+                try:
+                    task_page = notion_client.pages.retrieve(page_id=task_ids[0])
+                    t_props = task_page["properties"]
+                    t_name_list = t_props.get(PROP["title"], {}).get("title", [])
+                    task_name = t_name_list[0]["plain_text"] if t_name_list else "(제목 없음)"
+                    task_url = task_page["url"]
+                    status = t_props.get(PROP["status"], {}).get("status", {}).get("name", "")
+                    client = t_props.get(PROP["client"], {}).get("select", {}).get("name", "")
+                except: pass
+
+            def _rt(k):
+                r = props.get(k, {}).get("rich_text", [])
+                return "".join([rt.get("plain_text", "") for rt in r])
+
+            logs.append({
+                "author": author_name,
+                "date": props.get("날짜", {}).get("date", {}).get("start", ""),
+                "task_name": task_name,
+                "task_url": task_url,
+                "status": status,
+                "client": client,
+                "completed": _rt("완료"),
+                "tomorrow": _rt("내일예정"),
+                "consultation": _rt("협의사항"),
+                "issues": _rt("이슈"),
+                "risk": _rt("리스크"),
+            })
+        return logs
     except Exception as e:
-        logger.error(f"마감리스크 업무 조회 실패: {e}")
+        logger.error(f"주간 일지 조회 실패: {e}")
         return []
