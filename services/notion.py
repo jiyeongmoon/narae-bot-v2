@@ -384,7 +384,7 @@ def create_task(task_name: str, assignee_notion_id: str = None,
             {"object": "block", "type": "paragraph",
              "paragraph": {"rich_text": []}},
             {"object": "block", "type": "paragraph",
-             "paragraph": {"rich_text": [{"type": "text", "text": {"content": "\nTo-do :"}, "annotations": {"bold": True}}]}},
+             "paragraph": {"rich_text": [{"type": "text", "text": {"content": "To-do :"}, "annotations": {"bold": True}}]}},
         ]
         try:
             notion_client.blocks.children.append(block_id=page_id, children=body_blocks)
