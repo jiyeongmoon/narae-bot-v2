@@ -44,12 +44,30 @@ def _task_label(task: dict) -> str:
     return f"{prefix}{name}{suffix}"
 
 
+def _group_by_person(tasks: list[dict]) -> dict:
+    """Task 목록을 담당자(assignees) 기준으로 그룹화합니다.
+    
+    Returns:
+        {담당자명: [task, ...], ..., "미배정": [task, ...]}
+    """
+    grouped = {}
+    for task in tasks:
+        assignees = task.get("assignees") or []
+        if not assignees:
+            grouped.setdefault("미배정", []).append(task)
+        else:
+            for name in assignees:
+                grouped.setdefault(name, []).append(task)
+    return grouped
+
+
 def build_task_select_modal(tasks: list[dict],
                             user_real_name: str = "",
                             search_keyword: str = "",
                             filter_user_id: str = None,
                             filter_user_name: str = "") -> dict:
     """활성 Task를 [담당자별] 섹션으로 분류하여 표시."""
+
 
     # ── 필터링 및 정렬 ────────────────
     ACTIVE_STATUSES = ["🚀 진행 중", "🙏 진행 예정"]
