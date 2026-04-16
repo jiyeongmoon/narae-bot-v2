@@ -935,7 +935,13 @@ def get_deadline_risk_tasks() -> list[dict]:
 
             t["risk_content"] = content
         return tasks
+    except Exception as e:
+        logger.error(f"마감리스크 태스크 조회 실패: {e}")
+        return []
+
+
 def get_weekly_logs() -> list[dict]:
+
     """최근 7일간 일지 DB(Log DB)에 작성된 모든 일지를 수집합니다."""
     log_db_id = ensure_log_db()
     if not log_db_id: return []
