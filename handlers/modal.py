@@ -205,8 +205,6 @@ def register_modals(app):
 
             # ── To-do 기반 완료/예정 자동 조합 ───────────────────
             s = current + 1   # 현재 스텝 번호 (block_id 접미사와 동일)
-            manual_completed = get_val(f"block_completed_{s}", f"completed_{s}")
-            manual_tomorrow  = get_val(f"block_tomorrow_{s}",  f"tomorrow_{s}")
 
             # 오늘 완료: 체크된 To-do 항목 자동 수집
             auto_completed_lines = []
@@ -267,12 +265,13 @@ def register_modals(app):
                         task_name=task["name"],
                         log_date=log["log_date"],
                         completed=log["completed"],
-                        tomorrow=log["tomorrow"],
+                        todo_add=log["todo_add"],
                         consultation=log["consultation"],
                         issues=log["issues"],
                         risk=log["risk"],
                         author_slack=author_name,
-                        is_new_task=True,   # 새 Task: 완료+내일예정 모두 To-do에 추가
+                        is_new_task=True,
+                        daily_log=log["daily_log"],
                     )
                     done[-1]["name"] = task["name"]
                     done[-1]["url"]  = task["url"]

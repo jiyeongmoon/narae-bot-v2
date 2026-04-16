@@ -99,7 +99,8 @@ def register_messages(app):
                 "author": user_real_name or user_id,
                 "log_date": _dt.date.today().isoformat(),
                 "completed": content or "-",
-                "tomorrow": "-",
+                "daily_log": "",
+                "todo_add": "",
                 "issues": "-",
                 "risk": "-",
             }
@@ -108,12 +109,12 @@ def register_messages(app):
                 task_name=matched_name,
                 log_date=log["log_date"],
                 completed=log["completed"],
-                tomorrow=log["tomorrow"],
+                todo_add=log["todo_add"],
                 issues=log["issues"],
                 risk=log["risk"],
                 author_slack=log["author"],
                 is_new_task=is_new,
-                manual_completed=log["completed"]
+                daily_log=log["daily_log"],
             )
 
             if ok:
