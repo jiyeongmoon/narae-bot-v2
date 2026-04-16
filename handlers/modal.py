@@ -15,7 +15,7 @@ from services.notion import (
     create_task,
     get_notion_user_id,
     get_task_todos,
-    delete_todo_block,
+    update_todo_checked,
     replace_text_pattern_todos,
     update_task_status,
     CLIENT_TO_PREFIX,
@@ -208,33 +208,32 @@ def register_modals(app):
             manual_completed = get_val(f"block_completed_{s}", f"completed_{s}")
             manual_tomorrow  = get_val(f"block_tomorrow_{s}",  f"tomorrow_{s}")
 
+            # 오늘 완료: 체크된 To-do 항목 자동 수집
             auto_completed_lines = []
 
             if not is_new and checked_todo_ids is not None:
                 try:
                     all_todos = get_task_todos(task_id)
                     for todo in all_todos:
-                        # 이번에 '새롭게' 체크한 항목만 "오늘 완료"에 기록 (기존 체크 항목 제외)
                         if todo["id"] in checked_todo_ids and not todo.get("checked"):
                             auto_completed_lines.append(f"• {todo['text']}")
-                        #   → replace_text_pattern_todos()가 To-do 섹션에 실제 to_do 블록으로 삽입
                 except Exception as e:
                     logger.warning(f"To-do 재조회 실패: {e}")
 
-            # 오늘 완료: 체크된 항목(auto) + 수동 입력(manual) 병합
-            combined_completed = "\n".join(filter(None, [
-                ("\n".join(auto_completed_lines)) if auto_completed_lines else "",
-                manual_completed
-            ]))
-            # 내일 예정: 수동 입력만 (미체크 항목은 to_do 블록으로 직접 삽입)
-            combined_tomorrow = manual_tomorrow
+            # 필드 파싱
+            daily_log = get_val(f"block_daily_log_{s}", f"daily_log_{s}")
+            todo_add  = get_val(f"block_todo_add_{s}",  f"todo_add_{s}")
+
+            # 오늘 완료: 체크된 to-do 항목 (auto)
+            combined_completed = "\n".join(auto_completed_lines) if auto_completed_lines else ""
 
             log_date = get_date(f"block_log_date_{s}", f"log_date_{s}")
             log = {
                 "author":       author_name,
                 "log_date":     log_date or datetime.date.today().isoformat(),
                 "completed":    combined_completed,
-                "tomorrow":     combined_tomorrow,
+                "daily_log":    daily_log,
+                "todo_add":     todo_add,
                 "consultation": get_val(f"block_consultation_{s}", f"consultation_{s}"),
                 "issues":       get_val(f"block_issues_{s}",       f"issues_{s}"),
                 "risk":         get_val(f"block_risk_{s}",         f"risk_{s}"),
@@ -287,13 +286,12 @@ def register_modals(app):
                         all_todos_now = get_task_todos(task_id)
                         c_ids = checked_todo_ids or set()
 
-                        # 2-a. 진짜 Notion to_do 블록: 완료된 항목은 섹션에서 삭제
-                        #      (삭제 후 로그 본문에만 텍스트로 기록됨)
+                        # 2-a. 진짜 to_do 블록: 체크된 항목 → checked=True 상태로 유지
                         for todo in all_todos_now:
                             if todo["block_type"] == "to_do" and todo["id"] in c_ids and not todo.get("checked"):
-                                delete_todo_block(todo["id"])
+                                update_todo_checked(todo["id"], True, author_name)
 
-                        # 2-b. text_pattern(- [ ] 텍스트) 블록 → 체크된 항목 삭제, 미체크 항목만 to_do로 변환
+                        # 2-b. text_pattern(- [ ] 텍스트) 블록 → checked=True to_do로 변환
                         replace_text_pattern_todos(task_id, all_todos_now, c_ids, author_name)
                     except Exception as te:
                         logger.warning(f"To-do 업데이트 무시됨: {te}")
@@ -304,13 +302,13 @@ def register_modals(app):
                     task_name=current_task["name"],
                     log_date=log["log_date"],
                     completed=log["completed"],
-                    tomorrow=log["tomorrow"],
+                    todo_add=log["todo_add"],
                     consultation=log["consultation"],
                     issues=log["issues"],
                     risk=log["risk"],
                     status_update=new_status or "",
                     author_slack=author_name,
-                    manual_completed=manual_completed,
+                    daily_log=log["daily_log"],
                 )
 
             # 마지막 단계면 완료 메시지 발송

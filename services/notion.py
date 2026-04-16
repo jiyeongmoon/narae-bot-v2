@@ -456,9 +456,9 @@ def update_task_participants(page_id: str, slack_display_name: str) -> bool:
         return False
 
 
-def save_log(task_id, task_name, log_date, completed, tomorrow,
+def save_log(task_id, task_name, log_date, completed, todo_add,
              consultation="", issues="", risk="", status_update="", author_slack="",
-             is_new_task=False, manual_completed=""):
+             is_new_task=False, daily_log=""):
     log_db_id = ensure_log_db()
     if not log_db_id:
         logger.warning("일지 DB를 쓸 수 없으므로 중앙 DB 기록은 생략하고 Task 페이지에만 기록합니다.")
@@ -471,9 +471,9 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
 
     try:
         toggle_children = []
-        for h, t in [("✅ 완료", completed), ("🔜 내일 예정", tomorrow), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
+        for h, t in [("✅ 오늘 완료", completed), ("📝 데일리 로그", daily_log), ("📌 To-do 추가", todo_add), ("🤝 협의", consultation), ("⚠️ 이슈", issues), ("🚨 리스크", risk)]:
             if t:
-                if h in ("✅ 완료", "🔜 내일 예정"):
+                if h in ("✅ 오늘 완료", "📝 데일리 로그", "📌 To-do 추가"):
                     # 헤더는 독립된 단락으로 (줄바꿈 효과)
                     toggle_children.append({
                         "object": "block", "type": "paragraph",
@@ -514,25 +514,13 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             }
         ]
         
-        # • 새 Task만: 완료(체크) 항목을 To-do 섹션에 삽입
-        # • 기존 Task는 본문에 로그만 남기고 To-do 생성은 하지 않음 (사용자 요청: 과정만 기록)
+        # To-do 블록: todo_add 입력 항목만 미완료 체크박스로 생성
         todo_blocks = []
-        if is_new_task and completed:
-            for line in [l.strip() for l in completed.splitlines() if l.strip()]:
+        if todo_add:
+            for line in [l.strip() for l in todo_add.splitlines() if l.strip()]:
                 if line.startswith("• "): line = line[2:]
                 elif line.startswith("- "): line = line[2:]
-                todo_blocks.append({
-                    "object": "block", "type": "to_do",
-                    "to_do": {"rich_text": [{"type": "text", "text": {"content": line}}], "checked": True}
-                })
-        # 기존 Task의 manual_completed에 의한 to_do_blocks 생성부 삭제
-        if tomorrow:
-            for line in [l.strip() for l in tomorrow.splitlines() if l.strip()]:
-                if line.startswith("• "): line = line[2:]
-                elif line.startswith("- "): line = line[2:]
-                
-                # 생성 시 실명 표기 추가 (예: 업무명 (문지영))
-                todo_text = f"{line} ({author_name})"
+                todo_text = f"{line} ({author_name})" if author_name else line
                 todo_blocks.append({
                     "object": "block", "type": "to_do",
                     "to_do": {"rich_text": [{"type": "text", "text": {"content": todo_text}}], "checked": False}
@@ -556,7 +544,7 @@ def save_log(task_id, task_name, log_date, completed, tomorrow,
             if task_id and not task_id.startswith("NEW_TASK"): props["연결Task"] = {"relation": [{"id": task_id}]}
             aid = get_notion_user_id(author_slack)
             if aid: props["작성자"] = {"people": [{"id": aid}]}
-            for k, v in [("완료", completed), ("내일예정", tomorrow), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
+            for k, v in [("완료", completed), ("데일리로그", daily_log), ("To-do추가", todo_add), ("협의사항", consultation), ("이슈", issues), ("리스크", risk)]:
                 if v: props[k] = {"rich_text": [{"text": {"content": v[:2000]}}]}
 
             page = notion_client.pages.create(parent={"database_id": log_db_id}, properties=props)
@@ -775,22 +763,20 @@ def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set, 
 
         # 3. 최적의 삽입 위치 탐색 (To-do 섹션 찾기)
         if text_pattern_todos:
-            # 미체크 항목만 To-do 블록으로 변환 (완료 항목은 원본 삭제로 처리 완료)
+            # 완료 항목 → checked=True, 미완료 항목 → checked=False 로 변환
             tag = f" ({author_name})" if author_name else ""
             new_todo_blocks = []
             for t in text_pattern_todos:
-                if t["id"] in checked_ids:
-                    continue  # 완료 항목 → 블록 변환 없이 건너뜀
-
+                is_checked = t["id"] in checked_ids
                 text = t["text"]
-                if tag and tag not in text:
+                if is_checked and tag and tag not in text:
                     text += tag
 
                 new_todo_blocks.append({
                     "object": "block", "type": "to_do",
                     "to_do": {
                         "rich_text": [{"type": "text", "text": {"content": text}}],
-                        "checked": False
+                        "checked": is_checked
                     }
                 })
 
