@@ -630,51 +630,41 @@ def build_error_message(message: str) -> list:
 # 4. 주간 요약 메시지
 # ════════════════════════════════════════════════════════════
 
-def _group_by_log_author(logs: list[dict]) -> dict[str, list]:
-    """로그 작성자(실명)별로 데이터를 그룹화합니다."""
-    grouped: dict[str, list] = {}
-    for log in logs:
-        author = log.get("author", "알 수 없음")
-        grouped.setdefault(author, []).append(log)
-    return grouped
+def _build_task_line_weekly(task: dict) -> str:
+    """주간 요약용 개별 Task 라인 구성."""
+    name = task.get("name", "(제목 없음)")
+    url = task.get("url", "")
+    client = task.get("client", "")
+    status = task.get("status", "")
+    deadline = task.get("deadline", "")
 
-
-def _build_log_line(log: dict) -> str:
-    """주간 요약용 개별 로그 라인 구성."""
-    task_name = log.get("task_name", "(제목 없음)")
-    task_url = log.get("task_url", "")
-    client = log.get("client", "")
-    status = log.get("status", "")
-    
-    name_link = f"<{task_url}|{task_name}>" if task_url else task_name
+    name_link = f"<{url}|{name}>" if url else name
     client_str = f"*{client}* | " if client else ""
     status_str = f" ({status})" if status else ""
-    
-    lines = [f"• {client_str}{name_link}{status_str}"]
-    
-    # 과정 기록(오늘 완료) 추가
-    if log.get("completed"):
-        # 불릿 포인트가 너무 많으면 요약
-        comp = log["completed"].strip()
-        if len(comp) > 150: comp = comp[:147] + "..."
-        lines.append(f"> {comp}")
-        
-    return "\n".join(lines)
+    deadline_str = f" ~{deadline}" if deadline else ""
+
+    return f"• {client_str}{name_link}{status_str}{deadline_str}"
 
 
-def build_weekly_summary_message(logs: list[dict]) -> list:
+def build_weekly_summary_message(tasks: list[dict]) -> list:
     """
-    작성자별로 그룹화된 주간 요약 블록 빌더.
-    tasks 대신 logs 데이터를 직접 사용합니다.
+    이번 주 작성·업데이트된 Task를 담당자별로 그룹화한 주간 요약 블록 빌더.
+    tasks: get_weekly_updated_tasks() 결과 (Task DB 기반)
     """
-    if not logs:
+    if not tasks:
         return [{
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": "📊 *주간 요약*\n\n이번 주 기록된 업무일지가 없습니다."},
+                     "text": "📊 *주간 요약*\n\n이번 주 업데이트된 업무가 없습니다."},
         }]
 
-    grouped = _group_by_log_author(logs)
+    grouped = _group_by_person(tasks)
+
+    # 담당자 있는 사람 먼저, 미배정은 마지막
+    ordered_people = [p for p in grouped if p != "미배정"] + \
+                     (["미배정"] if "미배정" in grouped else [])
+
+    total_count = len(tasks)
     blocks = [
         {
             "type": "header",
@@ -683,24 +673,31 @@ def build_weekly_summary_message(logs: list[dict]) -> list:
         {
             "type": "context",
             "elements": [{"type": "mrkdwn",
-                          "text": f"이번 주 총 {len(logs)}건의 일지가 기록되었습니다."}],
+                          "text": f"이번 주 업데이트된 업무 총 {total_count}건"}],
         },
         {"type": "divider"},
     ]
 
-    for author, author_logs in grouped.items():
+    for person in ordered_people:
+        person_tasks = grouped[person]
+        icon = "👤" if person != "미배정" else "⚠️"
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn",
-                     "text": f"*👤 {author}* ({len(author_logs)}건)"},
+                     "text": f"*{icon} {person}* ({len(person_tasks)}건)"},
         })
 
-        # 동일한 업무에 여러 로그가 있을 수 있으므로 태스크별로 한 번 더 묶어주면 좋음
-        # 여기서는 단순 나열하되, 가독성을 위해 간결하게 처리
-        for log in author_logs:
+        top5 = person_tasks[:5]
+        rest = len(person_tasks) - 5
+        lines = [_build_task_line_weekly(t) for t in top5]
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+        })
+        if rest > 0:
             blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": _build_log_line(log)},
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"_외 {rest}건_"},],
             })
 
         blocks.append({"type": "divider"})

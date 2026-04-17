@@ -63,6 +63,16 @@ flask_app = Flask(__name__)
 def health():
     return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
 
+@flask_app.route("/send-weekly", methods=["GET"])
+def trigger_weekly_summary():
+    """주간 요약 즉시 발송 트리거 (브라우저에서 직접 호출 가능)"""
+    try:
+        from services.scheduler import send_weekly_summary
+        send_weekly_summary(bolt_app.client)
+        return {"status": "ok", "message": "주간 요약 발송 완료"}, 200
+    except Exception as e:
+        return {"status": "error", "message": str(e)}, 500
+
 @flask_app.route("/launch", methods=["GET"])
 def launch_proposal():
     html_content = '''

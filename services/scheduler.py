@@ -41,13 +41,21 @@ def send_weekly_summary(slack_client):
 
     try:
         tasks = get_weekly_updated_tasks(only_assigned=True)
+
+        # ── 데이터 품질 검증: 정상 업무가 없으면 조용히 생략 ──────────
+        if not tasks:
+            logger.warning(
+                "주간 요약 발송 생략: 이번 주 담당자가 지정된 업데이트 Task가 0건입니다."
+            )
+            return
+
         blocks = build_weekly_summary_message(tasks)
         slack_client.chat_postMessage(
             channel=SLACK_CHANNEL_ID,
             text="📊 주간 요약",
             blocks=blocks,
         )
-        logger.info(f"주간 요약 전송 완료 ({len(tasks)}개 Task)")
+        logger.info(f"주간 요약 전송 완료 ({len(tasks)}개 Task 기반)")
     except Exception as e:
         logger.error(f"주간 요약 전송 실패: {e}")
 

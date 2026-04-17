@@ -1004,16 +1004,17 @@ def get_weekly_logs() -> list[dict]:
             sorts=[{"property": "날짜", "direction": "descending"}]
         )
         logs = []
+        skipped = 0
         for page in response["results"]:
             props = page["properties"]
             
             # 작성자 (People 속성)
             people = props.get("작성자", {}).get("people", [])
-            author_name = people[0].get("name", "알 수 없음") if people else "알 수 없음"
+            author_name = people[0].get("name", "") if people else ""
             
             # 연결된 Task 정보 (Relation)
             task_ids = [r["id"] for r in props.get("연결Task", {}).get("relation", [])]
-            task_name = "(연결된 업무 없음)"
+            task_name = ""
             task_url = ""
             status = ""
             client = ""
@@ -1023,11 +1024,23 @@ def get_weekly_logs() -> list[dict]:
                     task_page = notion_client.pages.retrieve(page_id=task_ids[0])
                     t_props = task_page["properties"]
                     t_name_list = t_props.get(PROP["title"], {}).get("title", [])
-                    task_name = t_name_list[0]["plain_text"] if t_name_list else "(제목 없음)"
+                    task_name = t_name_list[0]["plain_text"] if t_name_list else ""
                     task_url = task_page["url"]
                     status = t_props.get(PROP["status"], {}).get("status", {}).get("name", "")
                     client = t_props.get(PROP["client"], {}).get("select", {}).get("name", "")
-                except: pass
+                except Exception as te:
+                    logger.warning(f"Task 정보 조회 실패 (page_id={page['id']}): {te}")
+
+            # ── 데이터 품질 검증: 작성자·업무명 미확인 일지는 제외 ──
+            if not author_name or not task_name:
+                skipped += 1
+                logger.warning(
+                    f"주간 일지 품질 불량 (제외됨) — "
+                    f"page_id={page['id']}, "
+                    f"author='{author_name or '없음'}', "
+                    f"task_name='{task_name or '없음'}'"
+                )
+                continue
 
             def _rt(k):
                 r = props.get(k, {}).get("rich_text", [])
@@ -1046,6 +1059,9 @@ def get_weekly_logs() -> list[dict]:
                 "issues": _rt("이슈"),
                 "risk": _rt("리스크"),
             })
+
+        if skipped:
+            logger.warning(f"주간 일지 {skipped}건이 데이터 불량으로 제외됨 (작성자 없음·업무명 없음).")
         return logs
     except Exception as e:
         logger.error(f"주간 일지 조회 실패: {e}")
