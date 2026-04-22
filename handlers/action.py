@@ -22,17 +22,22 @@ def register_actions(app):
             except:
                 rn = ""
             if rn:
+                # 내 담당 업무 우선 조회 (is_assigned 필드 포함)
                 tasks = get_my_tasks(rn)
-                if len(tasks) < 5:
+                my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
+                # 담당 업무가 3개 미만인 경우에만 전체에서 보충
+                if my_assigned_count < 3:
                     at = get_all_tasks()
                     eids = {t["id"] for t in tasks}
                     for t in at:
                         if t["id"] not in eids:
+                            t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
                             tasks.append(t)
-                            if len(tasks) >= 9: break
             else:
                 tasks = get_all_tasks()
-            logger.info(f"tasks={len(tasks)} user={rn}")
+                for t in tasks:
+                    t.setdefault("is_assigned", False)  # ← is_assigned 누락 방지
+            logger.info(f"tasks={len(tasks)} user={rn} (assigned={sum(1 for t in tasks if t.get('is_assigned'))})")
             client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn))
         except Exception as e: logger.error(f"modal err: {e}")
 
@@ -54,15 +59,18 @@ def register_actions(app):
             if not kw:
                 if rn:
                     tasks = get_my_tasks(rn)
-                    if len(tasks) < 5:
+                    my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
+                    if my_assigned_count < 3:
                         at = get_all_tasks()
                         eids = {t["id"] for t in tasks}
                         for t in at:
                             if t["id"] not in eids:
+                                t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
                                 tasks.append(t)
-                                if len(tasks) >= 9: break
                 else:
                     tasks = get_all_tasks()
+                    for t in tasks:
+                        t.setdefault("is_assigned", False)
                 logger.info(f"search cleared, reset to {len(tasks)} tasks for {rn}")
                 client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn or ""))
                 return

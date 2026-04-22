@@ -54,20 +54,23 @@ def register_commands(app):
             from services.notion import get_all_tasks, get_my_tasks
             
             if real_name:
+                # 내 담당 업무 우선 조회 (is_assigned 필드 포함)
                 tasks = get_my_tasks(real_name)
-                # 내 업무가 적으면 전체 직무 중 일부 충원 (최대 9개)
-                if len(tasks) < 5:
+                my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
+                # 담당 업무가 3개 미만인 경우에만 전체에서 보충
+                if my_assigned_count < 3:
                     all_tasks = get_all_tasks()
                     existing_ids = {t["id"] for t in tasks}
                     for t in all_tasks:
                         if t["id"] not in existing_ids:
+                            t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
                             tasks.append(t)
-                            if len(tasks) >= 9:
-                                break
             else:
                 tasks = get_all_tasks()
+                for t in tasks:
+                    t.setdefault("is_assigned", False)  # ← is_assigned 누락 방지
 
-            logger.info(f"/일지 명령어 — Task {len(tasks)}개 구성 (사용자: {real_name})")
+            logger.info(f"/일지 명령어 — Task {len(tasks)}개 구성 (assigned={sum(1 for t in tasks if t.get('is_assigned'))}, 사용자: {real_name})")
 
             modal = build_task_select_modal(tasks, user_real_name=real_name)
             client.views_update(view_id=view_id, view=modal)
