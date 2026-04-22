@@ -191,15 +191,21 @@ def _parse_task(page: dict) -> dict:
     status_raw = props.get(PROP["status"], {}).get("status")
     status = status_raw["name"] if status_raw else None
     
-    # [DIAGNOSTIC] 담당자 매칭 실패 원인 파악을 위해 속성명 전수 조사
-    if name != "(제목 없음)":
-        logger.info(f"[DB_KEYS] Available Properties: {list(props.keys())}")
-        assignee_prop = props.get(PROP["assignee"], {})
-        assignee_type = assignee_prop.get("type")
-        logger.info(f"[PARSE_TEST] TargetProp='{PROP['assignee']}', Type='{assignee_type}', Data={assignee_prop}")
-
+    # 1. 담당자 속성 찾기 (이름 기반 우선, 없으면 타입 기반 자동 감지)
+    assignee_prop = props.get(PROP["assignee"], {})
+    assignee_type = assignee_prop.get("type")
+    
+    # [Fallback] 설정된 이름('담당자')으로 데이터가 없으면 People 타입의 다른 속성 탐색
+    if not assignee_type or (assignee_type == "people" and not assignee_prop.get("people")):
+        for p_name, p_val in props.items():
+            if p_val.get("type") == "people" and p_val.get("people"):
+                assignee_prop = p_val
+                assignee_type = "people"
+                logger.info(f"[AutoDetect] Found assignee in property: '{p_name}'")
+                break
+    
     assignees = []
-    # 1. 속성 타입별 데이터 추출
+    # 2. 속성 타입별 데이터 추출
     if assignee_type == "people":
         assignees = assignee_prop.get("people", [])
     elif assignee_type in ["created_by", "last_edited_by"]:
