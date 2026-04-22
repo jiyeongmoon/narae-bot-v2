@@ -260,42 +260,75 @@ def _get_user_info_from_db(name: str) -> dict:
 
 
 def get_my_tasks(slack_display_name: str) -> list[dict]:
+    """사용자의 담당 업무를 조회합니다. (페이징 대응 및 매칭 강화)"""
     try:
+        # 1. 사용자 정보 식별 (ID 및 별칭)
         user_info = _get_user_info_from_db(slack_display_name)
-        my_keywords = [k.lower() for k in user_info["aliases"]]
+        my_keywords = [k.lower().replace(" ", "") for k in user_info["aliases"]]
         my_person_id = user_info.get("person_id")
         
-        response = notion_client.databases.query(
-            database_id=NOTION_TASK_DB_ID,
-            filter=_build_active_task_filter(),
-            sorts=[{"property": PROP["deadline"], "direction": "ascending"}]
-        )
-        tasks = [_parse_task(p) for p in response["results"]]
+        # 2. 추가 ID 조회 (Notion Users API 활용)
+        if not my_person_id:
+            my_person_id = get_notion_user_id(slack_display_name)
+        
+        logger.info(f"[Match] 시도: {slack_display_name} (ID: {my_person_id}, 키워드: {my_keywords})")
+
+        # 3. 전체 활성 Task 조회 (페이징 대응)
+        all_pages = []
+        query_params = {
+            "database_id": NOTION_TASK_DB_ID,
+            "filter": _build_active_task_filter(),
+            "sorts": [{"property": PROP["deadline"], "direction": "ascending"}]
+        }
+        
+        while True:
+            response = notion_client.databases.query(**query_params)
+            all_pages.extend(response.get("results", []))
+            if not response.get("has_more"):
+                break
+            query_params["start_cursor"] = response.get("next_cursor")
+
+        tasks = [_parse_task(p) for p in all_pages]
+        assigned_count = 0
+
         for t in tasks:
             # 1. ID 매칭 (최우선)
             if my_person_id and my_person_id in t.get("assignee_ids", []):
                 t["is_assigned"] = True
             else:
                 # 2. 이름/별칭 매칭 (Fallback)
-                t["is_assigned"] = any(any(kw in n.lower() for kw in my_keywords) for n in t.get("assignees", []))
+                # 공백 제거 후 비교하여 매칭률 향상
+                t_assignees = [n.lower().replace(" ", "") for n in t.get("assignees", [])]
+                t["is_assigned"] = any(any(kw in n for kw in my_keywords) for n in t_assignees)
+            
+            if t["is_assigned"]:
+                assigned_count += 1
         
+        logger.info(f"[Match] 결과: {slack_display_name} -> {assigned_count}건 매칭됨 (전체 {len(tasks)}건)")
         return sorted(tasks, key=lambda x: not x["is_assigned"])
-    except Exception: return []
-
-def search_tasks(keyword: str, slack_display_name: str = None) -> list[dict]:
-    try:
-        response = notion_client.databases.query(
-            database_id=NOTION_TASK_DB_ID,
-            filter={"and": [*_build_active_task_filter()["and"], {"property": PROP["title"], "title": {"contains": keyword}}]}
-        )
-        return [_parse_task(p) for p in response["results"]]
-    except Exception: return []
+    except Exception as e:
+        logger.error(f"get_my_tasks 오류: {e}")
+        return []
 
 def get_all_tasks() -> list[dict]:
+    """모든 활성 Task를 조회합니다. (페이징 대응)"""
     try:
-        response = notion_client.databases.query(database_id=NOTION_TASK_DB_ID, filter=_build_active_task_filter())
-        return [_parse_task(p) for p in response["results"]]
-    except Exception: return []
+        all_pages = []
+        query_params = {
+            "database_id": NOTION_TASK_DB_ID,
+            "filter": _build_active_task_filter()
+        }
+        while True:
+            response = notion_client.databases.query(**query_params)
+            all_pages.extend(response.get("results", []))
+            if not response.get("has_more"):
+                break
+            query_params["start_cursor"] = response.get("next_cursor")
+            
+        return [_parse_task(p) for p in all_pages]
+    except Exception as e:
+        logger.error(f"get_all_tasks 오류: {e}")
+        return []
 
 def get_weekly_updated_tasks(only_assigned: bool = False) -> list[dict]:
     """최근 7일간 업데이트된 업무를 가져옵니다. only_assigned=True 이면 담당자가 있는 업무만 필터링합니다."""

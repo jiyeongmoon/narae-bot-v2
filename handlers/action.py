@@ -22,21 +22,13 @@ def register_actions(app):
             except:
                 rn = ""
             if rn:
-                # 내 담당 업무 우선 조회 (is_assigned 필드 포함)
+                # get_my_tasks가 페이징 대응 및 전체 조회를 수행하며, 담당 업무를 최상단으로 정렬합니다.
                 tasks = get_my_tasks(rn)
-                my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
-                # 담당 업무가 3개 미만인 경우에만 전체에서 보충
-                if my_assigned_count < 3:
-                    at = get_all_tasks()
-                    eids = {t["id"] for t in tasks}
-                    for t in at:
-                        if t["id"] not in eids:
-                            t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
-                            tasks.append(t)
             else:
                 tasks = get_all_tasks()
                 for t in tasks:
-                    t.setdefault("is_assigned", False)  # ← is_assigned 누락 방지
+                    t.setdefault("is_assigned", False)
+
             logger.info(f"tasks={len(tasks)} user={rn} (assigned={sum(1 for t in tasks if t.get('is_assigned'))})")
             client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn))
         except Exception as e: logger.error(f"modal err: {e}")
@@ -59,14 +51,6 @@ def register_actions(app):
             if not kw:
                 if rn:
                     tasks = get_my_tasks(rn)
-                    my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
-                    if my_assigned_count < 3:
-                        at = get_all_tasks()
-                        eids = {t["id"] for t in tasks}
-                        for t in at:
-                            if t["id"] not in eids:
-                                t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
-                                tasks.append(t)
                 else:
                     tasks = get_all_tasks()
                     for t in tasks:

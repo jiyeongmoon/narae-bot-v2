@@ -54,21 +54,12 @@ def register_commands(app):
             from services.notion import get_all_tasks, get_my_tasks
             
             if real_name:
-                # 내 담당 업무 우선 조회 (is_assigned 필드 포함)
+                # get_my_tasks가 페이징 대응 및 전체 조회를 수행하며, 담당 업무를 최상단으로 정렬합니다.
                 tasks = get_my_tasks(real_name)
-                my_assigned_count = sum(1 for t in tasks if t.get("is_assigned"))
-                # 담당 업무가 3개 미만인 경우에만 전체에서 보충
-                if my_assigned_count < 3:
-                    all_tasks = get_all_tasks()
-                    existing_ids = {t["id"] for t in tasks}
-                    for t in all_tasks:
-                        if t["id"] not in existing_ids:
-                            t["is_assigned"] = False  # ← 보충 task에 is_assigned 명시
-                            tasks.append(t)
             else:
                 tasks = get_all_tasks()
                 for t in tasks:
-                    t.setdefault("is_assigned", False)  # ← is_assigned 누락 방지
+                    t.setdefault("is_assigned", False)
 
             logger.info(f"/일지 명령어 — Task {len(tasks)}개 구성 (assigned={sum(1 for t in tasks if t.get('is_assigned'))}, 사용자: {real_name})")
 
