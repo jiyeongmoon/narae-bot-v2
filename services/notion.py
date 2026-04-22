@@ -310,6 +310,32 @@ def get_my_tasks(slack_display_name: str) -> list[dict]:
         logger.error(f"get_my_tasks 오류: {e}")
         return []
 
+def search_tasks(keyword: str, slack_display_name: str = None) -> list[dict]:
+    """키워드로 Task를 검색합니다. (페이징 대응)"""
+    try:
+        all_pages = []
+        query_params = {
+            "database_id": NOTION_TASK_DB_ID,
+            "filter": {
+                "and": [
+                    *_build_active_task_filter()["and"],
+                    {"property": PROP["title"], "title": {"contains": keyword}}
+                ]
+            }
+        }
+        
+        while True:
+            response = notion_client.databases.query(**query_params)
+            all_pages.extend(response.get("results", []))
+            if not response.get("has_more"):
+                break
+            query_params["start_cursor"] = response.get("next_cursor")
+            
+        return [_parse_task(p) for p in all_pages]
+    except Exception as e:
+        logger.error(f"search_tasks 오류: {e}")
+        return []
+
 def get_all_tasks() -> list[dict]:
     """모든 활성 Task를 조회합니다. (페이징 대응)"""
     try:
