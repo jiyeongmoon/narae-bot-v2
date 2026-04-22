@@ -191,9 +191,33 @@ def _parse_task(page: dict) -> dict:
     status_raw = props.get(PROP["status"], {}).get("status")
     status = status_raw["name"] if status_raw else None
     
-    assignees = props.get(PROP["assignee"], {}).get("people", [])
-    assignee_names = [p.get("name", "") for p in assignees]
+    assignee_prop = props.get(PROP["assignee"], {})
+    assignee_type = assignee_prop.get("type")
+    assignees = []
+
+    # 1. 속성 타입별 데이터 추출
+    if assignee_type == "people":
+        assignees = assignee_prop.get("people", [])
+    elif assignee_type in ["created_by", "last_edited_by"]:
+        user_obj = assignee_prop.get(assignee_type)
+        if user_obj: assignees = [user_obj]
+    elif assignee_type == "relation":
+        # Relation인 경우 ID만 가져옴 (이름 매칭은 불가하므로 ID 매칭에 의존)
+        assignees = assignee_prop.get("relation", [])
+    elif assignee_type == "formula":
+        # 포뮬러 결과가 사람인 경우 (특수 케이스)
+        formula_res = assignee_prop.get("formula", {})
+        if formula_res.get("type") == "string":
+            # 결과가 문자열이면 이름 매칭용으로 추가
+            val = formula_res.get("string")
+            if val: assignees = [{"name": val}]
+
+    assignee_names = [p.get("name", "") for p in assignees if p.get("name")]
     assignee_ids = [p.get("id") for p in assignees if p.get("id")]
+    
+    # [DEBUG] 매칭이 안 되는 문제를 찾기 위해 첫 번째 Task의 파싱 결과 기록
+    if name != "(제목 없음)":
+        logger.debug(f"[Parse] Task: '{name}', Type: {assignee_type}, IDs: {assignee_ids}, Names: {assignee_names}")
     
     client_raw = props.get(PROP["client"], {}).get("select")
     client = client_raw["name"] if client_raw else None
