@@ -169,24 +169,33 @@ def build_task_select_modal(tasks: list[dict],
     header_name = filter_user_name if filter_user_id and filter_user_name else user_real_name
     self_header = f"✅ *{header_name}* 님 담당 업무" if header_name else "✅ *내 업무*"
 
-    # ── 내 업무 섹션 (제한 없음) ──────────────────────────────
+    # ── 내 업무 섹션 (Slack checkboxes 최대 10개 제한) ─────────
+    MAX_CHECKBOX_OPTIONS = 10
     if my_tasks:
         blocks.append({"type": "divider"})
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": self_header},
         })
+        displayed_my = my_tasks[:MAX_CHECKBOX_OPTIONS]
+        remaining_my = len(my_tasks) - len(displayed_my)
         blocks.append({
             "type": "input",
             "block_id": "block_my_tasks",
             "optional": True,
-            "label": {"type": "plain_text", "text": "내 업무 전체"},
+            "label": {"type": "plain_text", "text": f"내 업무 (최신 {len(displayed_my)}건)"},
             "element": {
                 "type": "checkboxes",
                 "action_id": "my_task_checkboxes",
-                "options": [_make_option(t) for t in my_tasks],
+                "options": [_make_option(t) for t in displayed_my],
             }
         })
+        if remaining_my > 0:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn",
+                              "text": f"_외 {remaining_my}건 — 🔍 키워드 검색으로 찾을 수 있습니다._"}],
+            })
 
     # ── 미배정 업무 섹션 (상위 5건) ──────────────────────────
     if unassigned_tasks:
@@ -449,19 +458,19 @@ def build_log_step_modal(metadata_json: str, task_name: str,
                     "type": "input",
                     "block_id": "block_todo_check",
                     "optional": True,
-                    "label": {"type": "plain_text", "text": "📋 To-do 진행 현황"},
-                    "hint": {"type": "plain_text", "text": "이번에 '새롭게' 완료한 항목만 체크하세요. ('오늘 완료'에 자동 기록)"},
+                    "label": {"type": "plain_text", "text": f"📋 To-do 진행 현황 ({len(todos)}건 중 최대 10건 표시)" if len(todos) > 10 else "📋 To-do 진행 현황"},
+                    "hint": {"type": "plain_text", "text": "이번에 '새롭게' 완료한 항목만 체크하세요. ('오늘 완료'에 자동 기록)" + (f" — 미표시 {len(todos) - 10}건은 노션에서 직접 관리해 주세요." if len(todos) > 10 else "")},
                     "element": {
                         "type": "checkboxes",
                         "action_id": "todo_checkboxes",
                         "options": [
                             {"text": {"type": "plain_text", "text": t["text"][:74] if len(t["text"]) <= 74 else t["text"][:71]+"..."}, "value": t["id"]}
-                            for t in todos
+                            for t in (sorted(todos, key=lambda x: (x.get("checked", False),))[:10])
                         ],
                         **(({"initial_options": [
                             {"text": {"type": "plain_text", "text": t["text"][:74] if len(t["text"]) <= 74 else t["text"][:71]+"..."}, "value": t["id"]}
-                            for t in todos if t.get("checked")
-                        ]}) if any(t.get("checked") for t in todos) else {})
+                            for t in (sorted(todos, key=lambda x: (x.get("checked", False),))[:10]) if t.get("checked")
+                        ]}) if any(t.get("checked") for t in (sorted(todos, key=lambda x: (x.get("checked", False),))[:10])) else {})
                     }
                 }
             ] if todos and not is_new else []),
