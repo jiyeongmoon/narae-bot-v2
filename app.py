@@ -20,7 +20,6 @@ from handlers.modal import register_modals
 from handlers.options import register_options
 from handlers.message import register_messages
 from handlers.project import register_project_handlers
-from handlers.proposal import register_proposal_handlers  # ← 제안서 초안 자동화
 from services.scheduler import start_scheduler
 from services.notion import ensure_db_properties, ensure_log_db
 
@@ -51,7 +50,6 @@ register_modals(bolt_app)
 register_options(bolt_app)
 register_messages(bolt_app)
 register_project_handlers(bolt_app)
-register_proposal_handlers(bolt_app)  # ← 제안서 초안 자동화
 
 # ── 스케줄러 시작 ──────────────────────────────────────────────
 start_scheduler(bolt_app.client)
@@ -62,43 +60,6 @@ flask_app = Flask(__name__)
 @flask_app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
-
-@flask_app.route("/send-weekly", methods=["GET"])
-def trigger_weekly_summary():
-    """주간 요약 즉시 발송 트리거 (브라우저에서 직접 호출 가능)"""
-    try:
-        from services.scheduler import send_weekly_summary
-        send_weekly_summary(bolt_app.client)
-        return {"status": "ok", "message": "주간 요약 발송 완료"}, 200
-    except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
-
-@flask_app.route("/launch", methods=["GET"])
-def launch_proposal():
-    html_content = '''
-    <html>
-        <head>
-            <title>나래 제안서 시스템 런처</title>
-            <meta charset="utf-8">
-        </head>
-        <body style="font-family: 'Pretendard', sans-serif; text-align: center; padding: 100px; background: #f8fafc;">
-            <h1 style="color: #0f172a; font-size: 24px; margin-bottom: 20px;">🚀 로컬 제안서 시스템 연결</h1>
-            <p style="color: #475569; font-size: 16px; margin-bottom: 40px;">
-                브라우저 보안 정책으로 인해 자동 실행이 차단되었을 수 있습니다.<br>
-                아래 버튼을 한 번 더 클릭하여 시스템을 실행해 주세요.
-            </p>
-            <a href="narae-proposal://launch" 
-               style="padding: 15px 40px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 800; font-size: 18px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-               🖥️ 시스템 직접 켜기
-            </a>
-            <script>
-                // 접속 즉시 한 번 시도
-                window.location.href = "narae-proposal://launch";
-            </script>
-        </body>
-    </html>
-    '''
-    return html_content, 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 3000))

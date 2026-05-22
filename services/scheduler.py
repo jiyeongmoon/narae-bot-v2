@@ -1,8 +1,8 @@
 """
-services/scheduler.py — 스케줄러 (일지 알림 + 주간 요약)
+services/scheduler.py — 스케줄러 (일지 알림 + 마감리스크 알림)
 ========================================================
+- 평일(월~금) 09:00 KST: 마감리스크 업무 알림
 - 평일(월~금) 17:00 KST: 일지 작성 알림
-- 금요일 18:00 KST: 주간 요약 자동 발송
 """
 
 import logging
@@ -10,7 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from config import SLACK_CHANNEL_ID
-from services.slack import build_daily_reminder_message, build_weekly_summary_message
+from services.slack import build_daily_reminder_message
 
 logger = logging.getLogger(__name__)
 
@@ -32,32 +32,6 @@ def send_daily_reminder(slack_client):
     except Exception as e:
         logger.error(f"일지 작성 알림 전송 실패: {e}")
         return False
-
-
-def send_weekly_summary(slack_client):
-    """금요일 18:00 주간 요약을 채널에 전송합니다."""
-    from services.notion import get_weekly_updated_tasks
-    from config import SLACK_CHANNEL_ID
-
-    try:
-        tasks = get_weekly_updated_tasks(only_assigned=True)
-
-        # ── 데이터 품질 검증: 정상 업무가 없으면 조용히 생략 ──────────
-        if not tasks:
-            logger.warning(
-                "주간 요약 발송 생략: 이번 주 담당자가 지정된 업데이트 Task가 0건입니다."
-            )
-            return
-
-        blocks = build_weekly_summary_message(tasks)
-        slack_client.chat_postMessage(
-            channel=SLACK_CHANNEL_ID,
-            text="📊 주간 요약",
-            blocks=blocks,
-        )
-        logger.info(f"주간 요약 전송 완료 ({len(tasks)}개 Task 기반)")
-    except Exception as e:
-        logger.error(f"주간 요약 전송 실패: {e}")
 
 
 def send_deadline_risk_alert(slack_client):
@@ -116,17 +90,6 @@ def start_scheduler(slack_client):
         ),
         args=[slack_client],
         id="daily_ilji_reminder",
-    )
-    _scheduler.add_job(
-        send_weekly_summary,
-        trigger=CronTrigger(
-            day_of_week="fri",
-            hour=18,
-            minute=0,
-            timezone="Asia/Seoul",
-        ),
-        args=[slack_client],
-        id="weekly_summary",
     )
     _scheduler.add_job(
         send_deadline_risk_alert,

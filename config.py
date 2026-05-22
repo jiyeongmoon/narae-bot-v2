@@ -49,38 +49,10 @@ SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
 # 일지 전용 채널 ID (메시지 입력 시 자동으로 노션에 기록)
 SLACK_LOG_CHANNEL_ID = os.environ.get("SLACK_LOG_CHANNEL_ID")
 
-# 대표 슬랙 사용자 ID (/kpi 명령어 접근 제한용, 선택)
-SLACK_ADMIN_ID = os.environ.get("SLACK_ADMIN_ID", "")
-
 # ── 드롭박스 (Dropbox) ──────────────────────────────────────────
 DROPBOX_APP_KEY = os.environ.get("DROPBOX_APP_KEY")
 DROPBOX_APP_SECRET = os.environ.get("DROPBOX_APP_SECRET")
 DROPBOX_REFRESH_TOKEN = os.environ.get("DROPBOX_REFRESH_TOKEN")
-
-# 사업기획 파이프라인 프로젝트 기본 경로
-PROPOSAL_BASE_DIR = os.environ.get(
-    "PROPOSAL_BASE_DIR",
-    r"c:\Users\user\공간환경계획연구실 Dropbox\04_Knowledge_Base\00_Obsidian\moon\01_프로젝트_실무_산출물"
-)
-
-# 사업기획 루트 폴더 카테고리 정의
-PROPOSAL_ROOTS = {
-    "02_Active_Project": {
-        "name": "02_Active_Project (일반 용역)",
-        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\02_Active_Project",
-        "dropbox": "/02_Active_Project"
-    },
-    "03_Sales_Proposals": {
-        "name": "03_Sales_Proposals (제안서)",
-        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\03_Sales_Proposals",
-        "dropbox": "/03_Sales_Proposals"
-    },
-    "01_프로젝트_실무_산출물": {
-        "name": "01_프로젝트_실무_산출물 (테스트용)",
-        "local": r"c:\Users\user\공간환경계획연구실 Dropbox\04_Knowledge_Base\00_Obsidian\moon\01_프로젝트_실무_산출물",
-        "dropbox": "/04_Knowledge_Base/00_Obsidian/moon/01_프로젝트_실무_산출물"
-    }
-}
 
 # ── 프로젝트 폴더 체계 (SOP v2.4) ──────────────────────────────
 # 사업팀 표준 7대 상위 폴더 (Active Project - 하위 폴더 없음)
