@@ -490,22 +490,29 @@ def update_task_risk(page_id: str, is_risk: bool) -> bool:
         return False
 
 def update_task_participants(page_id: str, slack_display_name: str) -> bool:
-    """일지 작성자를 Task의 '참여자' 목록에 자동으로 누적 추가합니다."""
+    """일지 작성자를 Task의 '참여자' 목록에 자동으로 누적 추가합니다.
+    단, 작성자가 해당 Task의 담당자인 경우에는 추가하지 않습니다."""
     try:
         user_id = get_notion_user_id(slack_display_name)
         if not user_id: return False
 
-        # 기존 참여자 조회
+        # 기존 페이지 조회 (담당자 + 참여자 동시 확인)
         page = notion_client.pages.retrieve(page_id=page_id)
+
+        # 작성자가 담당자인 경우 참여자에 추가하지 않음
+        current_assignees = page["properties"].get(PROP["assignee"], {}).get("people", [])
+        if user_id in [p["id"] for p in current_assignees]:
+            logger.info(f"참여자 추가 건너뜀: {slack_display_name}는 이미 담당자")
+            return True
+
         current_participants = page["properties"].get(PROP["participants"], {}).get("people", [])
-        
         current_ids = [p["id"] for p in current_participants]
         if user_id in current_ids:
-            return True # 이미 참여자에 포함됨
-            
+            return True  # 이미 참여자에 포함됨
+
         new_ids = current_ids + [user_id]
         notion_client.pages.update(
-            page_id=page_id, 
+            page_id=page_id,
             properties={PROP["participants"]: {"people": [{"id": uid} for uid in new_ids]}}
         )
         logger.info(f"참여자 추가 성공: {slack_display_name} -> {page_id}")
