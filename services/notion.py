@@ -1186,13 +1186,17 @@ def create_meeting_task(
     client_name: str = None,
     content_md: str = "",
     project_page_id: str = None,
+    meeting_title: str = "",
+    meeting_page_url: str = "",
 ) -> dict | None:
     """
     회의록 리뷰 모달에서 확정된 Task를 Notion Task DB에 생성.
 
-    priority : "P1" / "P2" / "P3" (없으면 None)
-    content_md : "- [ ] ..." 형식의 마크다운 (to_do 블록으로 변환)
+    priority        : "P1" / "P2" / "P3" (없으면 None)
+    content_md      : "- [ ] ..." 형식의 마크다운 (to_do 블록으로 변환)
     project_page_id : Notion 프로젝트 페이지 ID (relation 연결)
+    meeting_title   : 관련 회의록 제목 (본문 컨텍스트용)
+    meeting_page_url: 관련 회의록 Notion URL (본문 링크용)
     """
     properties: dict = {
         PROP["title"]: {
@@ -1219,12 +1223,15 @@ def create_meeting_task(
         properties[PROP["project"]] = {
             "relation": [{"id": project_page_id}]
         }
-    # 우선순위 select 속성 — 존재하지 않을 수 있으므로 생성 후 별도 업데이트
+
+    # 선택적 속성 (DB에 없으면 오류 → 제거 후 재시도)
     priority_prop_name = "우선순위"
+    type_prop_name     = "유형"
     if priority:
-        properties[priority_prop_name] = {
-            "select": {"name": priority}
-        }
+        properties[priority_prop_name] = {"select": {"name": priority}}
+    properties[type_prop_name] = {"select": {"name": "태스크"}}
+
+    optional_names = [priority_prop_name, type_prop_name]
 
     try:
         page = notion_client.pages.create(
@@ -1232,9 +1239,11 @@ def create_meeting_task(
             properties=properties,
         )
     except Exception as e:
-        # 우선순위 속성이 없는 경우 해당 필드 제거 후 재시도
-        if priority and priority_prop_name in str(e):
-            properties.pop(priority_prop_name, None)
+        err = str(e)
+        bad = [k for k in optional_names if k in err and k in properties]
+        if bad:
+            for k in bad:
+                properties.pop(k, None)
             try:
                 page = notion_client.pages.create(
                     parent={"database_id": NOTION_TASK_DB_ID},
@@ -1253,7 +1262,29 @@ def create_meeting_task(
     logger.info(f"회의 Task 생성: {name} (priority={priority})")
 
     # ── 페이지 본문 블록 추가 ────────────────────────────────────
-    body_blocks = []
+    body_blocks: list[dict] = []
+
+    # 회의록 컨텍스트 블록 (관련 회의록 링크)
+    if meeting_title or meeting_page_url:
+        link_rt: list[dict] = [
+            {"type": "text", "text": {"content": "📋 관련 회의록: "}}
+        ]
+        if meeting_page_url:
+            link_rt.append({
+                "type": "text",
+                "text": {
+                    "content": meeting_title or "회의록 보기",
+                    "link": {"url": meeting_page_url},
+                },
+            })
+        elif meeting_title:
+            link_rt.append({"type": "text", "text": {"content": meeting_title}})
+        body_blocks.append({
+            "object": "block", "type": "paragraph",
+            "paragraph": {"rich_text": link_rt},
+        })
+        body_blocks.append({"object": "block", "type": "divider", "divider": {}})
+
     # 내용(체크리스트) 블록
     if content_md:
         checklist_blocks = _parse_checklist_to_blocks(content_md)

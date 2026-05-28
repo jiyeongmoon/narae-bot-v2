@@ -378,8 +378,10 @@ def register_modals(app):
             )
             return
 
-        tasks = session_data.get("tasks", [])
-        meeting_page_id = session_data.get("meeting_page_id", "")
+        tasks            = session_data.get("tasks", [])
+        meeting_page_id  = session_data.get("meeting_page_id", "")
+        meeting_page_url = session_data.get("meeting_page_url", "")
+        meeting_title    = session_data.get("meeting_title", "")
         values = body.get("view", {}).get("state", {}).get("values", {})
 
         created: list[dict] = []
@@ -435,6 +437,8 @@ def register_modals(app):
                     client_name=task.get("발주처") or None,
                     content_md=task.get("내용", ""),
                     project_page_id=task.get("project_page_id") or None,
+                    meeting_title=meeting_title,
+                    meeting_page_url=meeting_page_url,
                 )
                 if result:
                     created.append(result)
