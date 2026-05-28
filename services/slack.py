@@ -923,7 +923,7 @@ def build_meeting_review_modal(
         initial_assignee: dict | None = None
         if assignee_hint:
             for opt in manager_options:
-                opt_name = opt["text"]["plain_text"]
+                opt_name = opt["text"]["text"]
                 if assignee_hint in opt_name or opt_name in assignee_hint:
                     initial_assignee = opt
                     break

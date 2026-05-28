@@ -251,23 +251,52 @@ def register_actions(app):
         """
         '🔍 Task 검토하기' 버튼 클릭 → 회의 Task 검토 모달 열기.
         session_id는 버튼 value로 전달됨.
+
+        전략: trigger_id 3초 창 안에 즉시 로딩 모달을 열고,
+        Notion API 조회(느릴 수 있음) 완료 후 views_update로 교체.
         """
         ack()
-        session_id = body.get("actions", [{}])[0].get("value", "")
-        channel_id = body.get("channel", {}).get("id", "")
+        uid = body.get("user", {}).get("id", "")
+        channel_id = body.get("channel", {}).get("id", "") or uid
 
+        _LOADING_VIEW = {
+            "type": "modal",
+            "title": {"type": "plain_text", "text": "📋 Task 검토"},
+            "close": {"type": "plain_text", "text": "닫기"},
+            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "⏳ 데이터를 불러오는 중..."}}],
+        }
+        _ERROR_VIEW = lambda msg: {
+            "type": "modal",
+            "title": {"type": "plain_text", "text": "❌ 오류"},
+            "close": {"type": "plain_text", "text": "닫기"},
+            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": msg}}],
+        }
+
+        # 1. trigger_id 창 안에 즉시 로딩 모달 열기
+        try:
+            resp = client.views_open(trigger_id=body["trigger_id"], view=_LOADING_VIEW)
+            view_id = resp["view"]["id"]
+        except Exception as e:
+            logger.error(f"로딩 모달 열기 실패: {e}")
+            try:
+                client.chat_postMessage(channel=uid or channel_id,
+                                        text="❌ 모달을 열 수 없습니다. 잠시 후 다시 시도해 주세요.")
+            except Exception:
+                pass
+            return
+
+        # 2. 세션 데이터 조회
+        session_id = body.get("actions", [{}])[0].get("value", "")
         session_data = cache_get(f"mtg:{session_id}")
         if not session_data:
-            uid = body.get("user", {}).get("id")
-            client.chat_postMessage(
-                channel=uid or channel_id,
-                text="❌ 세션이 만료됐습니다 (24h 초과). 다시 처리를 시작해 주세요.",
-            )
+            client.views_update(view_id=view_id, view=_ERROR_VIEW(
+                "❌ 세션이 만료됐습니다 (24h 초과). 다시 처리를 시작해 주세요."
+            ))
             return
 
         tasks = session_data.get("tasks", [])
 
-        # Notion에서 실시간 사용자 목록 조회
+        # 3. Notion 사용자 목록 조회 (로딩 모달이 이미 열렸으므로 시간 여유 있음)
         managers: list[dict] = []
         try:
             users_resp = notion_client.users.list()
@@ -277,8 +306,9 @@ def register_actions(app):
                 if u.get("type") == "person" and u.get("name")
             ]
         except Exception as e:
-            logger.warning(f"Notion 사용자 조회 실패: {e}")
+            logger.warning(f"Notion 사용자 조회 실패 (빈 목록으로 진행): {e}")
 
+        # 4. 실제 모달로 교체
         try:
             modal = build_meeting_review_modal(
                 session_id=session_id,
@@ -287,6 +317,9 @@ def register_actions(app):
                 filename=session_data.get("filename", ""),
                 channel_id=channel_id,
             )
-            client.views_open(trigger_id=body["trigger_id"], view=modal)
+            client.views_update(view_id=view_id, view=modal)
         except Exception as e:
-            logger.error(f"회의 검토 모달 열기 실패: {e}")
+            logger.error(f"회의 검토 모달 빌드 실패: {e}")
+            client.views_update(view_id=view_id, view=_ERROR_VIEW(
+                f"모달 생성 중 오류가 발생했습니다.\n```{str(e)[:300]}```"
+            ))
