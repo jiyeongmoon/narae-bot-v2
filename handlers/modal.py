@@ -19,13 +19,17 @@ from services.notion import (
     replace_text_pattern_todos,
     update_task_status,
     CLIENT_TO_PREFIX,
+    create_meeting_task,
+    append_meeting_task_relations,
 )
 from services.slack import (
     build_log_step_modal,
     build_multi_success_message,
     build_success_message,
     build_error_message,
+    PRIORITY_DISPLAY_TO_CODE,
 )
+from services.cache import get as cache_get, delete as cache_delete
 
 
 def register_modals(app):
@@ -338,3 +342,146 @@ def register_modals(app):
                 channel=user_id,
                 text=f"❌ *일지 기록 실패*\n오류 내용: `{str(e)}`"
             )
+
+    # ── 회의록 Task 검토 모달 제출 ────────────────────────────────
+    @app.view("modal_meeting_review")
+    def handle_meeting_review_submit(ack, body, client, logger):
+        """
+        회의 Task 검토 모달 제출 → Notion Task 일괄 생성.
+
+        흐름:
+          1. ack() 즉시 호출
+          2. private_metadata에서 session_id, channel_id 파싱
+          3. 캐시에서 원본 task 목록 조회
+          4. 각 task: 제외 여부 확인 → 담당자/우선순위/마감일 읽기 → create_meeting_task()
+          5. 회의 페이지의 관련과업 relation 업데이트
+          6. 결과 메시지 발송 + 캐시 삭제
+        """
+        ack()
+
+        user_id = body.get("user", {}).get("id", "")
+        raw_meta = body.get("view", {}).get("private_metadata", "{}")
+        try:
+            meta = json.loads(raw_meta)
+        except Exception:
+            meta = {}
+
+        session_id = meta.get("session_id", "")
+        channel_id = meta.get("channel_id", "") or user_id  # fallback to DM
+
+        # ── 캐시에서 세션 데이터 조회 ────────────────────────────
+        session_data = cache_get(f"mtg:{session_id}")
+        if not session_data:
+            client.chat_postMessage(
+                channel=user_id,
+                text="❌ 세션이 만료됐습니다 (24h 초과). 다시 처리를 시작해 주세요.",
+            )
+            return
+
+        tasks = session_data.get("tasks", [])
+        meeting_page_id = session_data.get("meeting_page_id", "")
+        values = body.get("view", {}).get("state", {}).get("values", {})
+
+        created: list[dict] = []
+        skipped: list[str] = []
+        failed: list[str] = []
+
+        for i, task in enumerate(tasks):
+            task_name = task.get("업무명", f"Task {i + 1}")
+
+            # ── 제외 체크 ─────────────────────────────────────────
+            excl_opts = (
+                values.get(f"task_{i}_exclude", {})
+                      .get("exclude_check", {})
+                      .get("selected_options", [])
+            )
+            if excl_opts:
+                skipped.append(task_name)
+                continue
+
+            # ── 담당자 ───────────────────────────────────────────
+            assignee_opt = (
+                values.get(f"task_{i}_assignee", {})
+                      .get("assignee_select", {})
+                      .get("selected_option") or {}
+            )
+            assignee_notion_id = assignee_opt.get("value", "")
+            if assignee_notion_id == "__none__":
+                assignee_notion_id = ""
+
+            # ── 우선순위 ─────────────────────────────────────────
+            priority_opt = (
+                values.get(f"task_{i}_priority", {})
+                      .get("priority_select", {})
+                      .get("selected_option") or {}
+            )
+            priority_label = priority_opt.get("value", "")
+            priority_code = PRIORITY_DISPLAY_TO_CODE.get(priority_label, "") or ""
+
+            # ── 마감일 ───────────────────────────────────────────
+            deadline = (
+                values.get(f"task_{i}_deadline", {})
+                      .get("deadline_pick", {})
+                      .get("selected_date", "")
+            ) or ""
+
+            # ── Notion Task 생성 ─────────────────────────────────
+            try:
+                result = create_meeting_task(
+                    task_name=task_name,
+                    assignee_notion_id=assignee_notion_id or None,
+                    priority=priority_code or None,
+                    deadline=deadline or None,
+                    client_name=task.get("발주처") or None,
+                    content_md=task.get("내용", ""),
+                    project_page_id=task.get("project_page_id") or None,
+                )
+                if result:
+                    created.append(result)
+                    logger.info(f"회의 Task 생성 완료: {task_name}")
+                else:
+                    failed.append(task_name)
+                    logger.error(f"회의 Task 생성 반환값 None: {task_name}")
+            except Exception as e:
+                failed.append(task_name)
+                logger.error(f"회의 Task 생성 예외: {task_name} — {e}")
+
+        # ── 회의 페이지 관련과업 relation 업데이트 ────────────────
+        if meeting_page_id and created:
+            created_ids = [t["id"] for t in created if t.get("id")]
+            try:
+                append_meeting_task_relations(meeting_page_id, created_ids)
+            except Exception as e:
+                logger.warning(f"관련과업 relation 업데이트 실패: {e}")
+
+        # ── 결과 메시지 ───────────────────────────────────────────
+        lines = []
+        for t in created:
+            if t.get("url"):
+                lines.append(f"• <{t['url']}|{t['name']}>")
+            else:
+                lines.append(f"• {t['name']}")
+        for name in skipped:
+            lines.append(f"• ~{name}~ (건너뜀)")
+        for name in failed:
+            lines.append(f"• ❌ {name} (생성 실패)")
+
+        summary = (
+            f"✅ *회의 Task 등록 완료* — {len(created)}건 생성"
+            + (f", {len(skipped)}건 건너뜀" if skipped else "")
+            + (f", {len(failed)}건 실패" if failed else "")
+        )
+        full_text = summary + "\n" + "\n".join(lines) if lines else summary
+
+        # channel_id가 유효하면 채널에, 아니면 DM으로
+        target = channel_id if channel_id else user_id
+        try:
+            client.chat_postMessage(channel=target, text=full_text)
+        except Exception:
+            client.chat_postMessage(channel=user_id, text=full_text)
+
+        # ── 세션 캐시 삭제 ────────────────────────────────────────
+        try:
+            cache_delete(f"mtg:{session_id}")
+        except Exception:
+            pass

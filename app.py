@@ -13,7 +13,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from flask import Flask
 import threading
 
-from config import validate_config, SLACK_BOT_TOKEN, SLACK_APP_TOKEN
+from config import validate_config, SLACK_BOT_TOKEN, SLACK_APP_TOKEN, NARAE_API_KEY, SLACK_REVIEW_USER_ID
 from handlers.command import register_commands
 from handlers.action import register_actions
 from handlers.modal import register_modals
@@ -60,6 +60,86 @@ flask_app = Flask(__name__)
 @flask_app.route("/health", methods=["GET"])
 def health():
     return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
+
+
+@flask_app.route("/api/meeting-review", methods=["POST"])
+def api_meeting_review():
+    """
+    meeting-bot → narae-bot Task 검토 요청 엔드포인트.
+
+    Request JSON:
+      {
+        "session_id": str (선택 — 없으면 UUID 생성),
+        "filename":   str,
+        "meeting_page_id":  str,
+        "meeting_page_url": str,
+        "meeting_title":    str,
+        "tasks": [
+          {
+            "업무명": str,
+            "담당자": str,
+            "우선순위": str,   # P1/P2/P3
+            "마감일": str,     # YYYY-MM-DD
+            "발주처": str,
+            "내용": str,       # 마크다운 체크리스트
+            "project_page_id": str,
+          },
+          ...
+        ]
+      }
+
+    Response JSON:
+      {"ok": true, "session_id": str, "task_count": int}
+    """
+    import uuid
+    from flask import request, jsonify
+    from services.cache import set as cache_set
+    from services.slack import build_meeting_notification
+
+    # ── API 키 인증 ──────────────────────────────────────────────
+    if NARAE_API_KEY:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {NARAE_API_KEY}":
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"ok": False, "error": "JSON body required"}), 400
+
+    session_id      = data.get("session_id") or str(uuid.uuid4())[:12]
+    tasks           = data.get("tasks", [])
+    filename        = data.get("filename", "")
+    meeting_page_id = data.get("meeting_page_id", "")
+    meeting_page_url = data.get("meeting_page_url", "")
+    meeting_title   = data.get("meeting_title", "")
+
+    # ── 세션 데이터 캐싱 (TTL: 24h) ─────────────────────────────
+    cache_set(f"mtg:{session_id}", {
+        "session_id":       session_id,
+        "filename":         filename,
+        "tasks":            tasks,
+        "meeting_page_id":  meeting_page_id,
+        "meeting_page_url": meeting_page_url,
+        "meeting_title":    meeting_title,
+    }, ttl=86400)
+
+    logging.info(f"[meeting-review] 세션 캐싱 완료: {session_id} ({len(tasks)}건, {filename})")
+
+    # ── Slack 알림 발송 (검토 담당자에게 DM) ────────────────────
+    review_target = SLACK_REVIEW_USER_ID
+    if review_target:
+        try:
+            blocks = build_meeting_notification(session_id, filename, len(tasks))
+            bolt_app.client.chat_postMessage(
+                channel=review_target,
+                text=f"📋 회의록 Task 검토 요청: {filename} ({len(tasks)}건)",
+                blocks=blocks,
+            )
+            logging.info(f"[meeting-review] Slack 알림 발송 → {review_target}")
+        except Exception as e:
+            logging.error(f"[meeting-review] Slack 알림 실패: {e}")
+
+    return jsonify({"ok": True, "session_id": session_id, "task_count": len(tasks)})
 
 def run_flask():
     port = int(os.environ.get("PORT", 3000))

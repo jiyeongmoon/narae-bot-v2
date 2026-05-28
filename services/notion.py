@@ -1132,3 +1132,185 @@ def get_weekly_logs() -> list[dict]:
     except Exception as e:
         logger.error(f"주간 일지 조회 실패: {e}")
         return []
+
+
+# ────────────────────────────────────────────────────────────
+# 회의록 Task 검토 모달 전용 함수
+# ────────────────────────────────────────────────────────────
+
+def _parse_checklist_to_blocks(text: str) -> list:
+    """마크다운 체크박스 문자열을 Notion to_do 블록 리스트로 변환.
+
+    지원 형식:
+      - [ ] 할 일        → to_do(checked=False)
+      - [x] 완료된 항목  → to_do(checked=True)
+      일반 텍스트 줄     → bulleted_list_item
+    """
+    blocks = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        # - [ ] 또는 - [x]
+        m = re.match(r"^-\s+\[( |x|X)\]\s+(.*)", stripped)
+        if m:
+            checked = m.group(1).lower() == "x"
+            content = m.group(2).strip()[:2000]
+            blocks.append({
+                "object": "block",
+                "type": "to_do",
+                "to_do": {
+                    "rich_text": [{"type": "text", "text": {"content": content}}],
+                    "checked": checked,
+                },
+            })
+        else:
+            # 일반 텍스트 줄은 불릿으로
+            content = stripped.lstrip("- •").strip()[:2000]
+            if content:
+                blocks.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"type": "text", "text": {"content": content}}]
+                    },
+                })
+    return blocks
+
+
+def create_meeting_task(
+    task_name: str,
+    assignee_notion_id: str = None,
+    priority: str = None,
+    deadline: str = None,
+    client_name: str = None,
+    content_md: str = "",
+    project_page_id: str = None,
+) -> dict | None:
+    """
+    회의록 리뷰 모달에서 확정된 Task를 Notion Task DB에 생성.
+
+    priority : "P1" / "P2" / "P3" (없으면 None)
+    content_md : "- [ ] ..." 형식의 마크다운 (to_do 블록으로 변환)
+    project_page_id : Notion 프로젝트 페이지 ID (relation 연결)
+    """
+    properties: dict = {
+        PROP["title"]: {
+            "title": [{"text": {"content": task_name}}]
+        },
+        PROP["status"]: {
+            "status": {"name": "🙏 진행 예정"}
+        },
+    }
+
+    if assignee_notion_id:
+        properties[PROP["assignee"]] = {
+            "people": [{"id": assignee_notion_id}]
+        }
+    if deadline:
+        properties[PROP["deadline"]] = {
+            "date": {"start": deadline}
+        }
+    if client_name:
+        properties[PROP["client"]] = {
+            "select": {"name": client_name}
+        }
+    if project_page_id:
+        properties[PROP["project"]] = {
+            "relation": [{"id": project_page_id}]
+        }
+    # 우선순위 select 속성 — 존재하지 않을 수 있으므로 생성 후 별도 업데이트
+    priority_prop_name = "우선순위"
+    if priority:
+        properties[priority_prop_name] = {
+            "select": {"name": priority}
+        }
+
+    try:
+        page = notion_client.pages.create(
+            parent={"database_id": NOTION_TASK_DB_ID},
+            properties=properties,
+        )
+    except Exception as e:
+        # 우선순위 속성이 없는 경우 해당 필드 제거 후 재시도
+        if priority and priority_prop_name in str(e):
+            properties.pop(priority_prop_name, None)
+            try:
+                page = notion_client.pages.create(
+                    parent={"database_id": NOTION_TASK_DB_ID},
+                    properties=properties,
+                )
+            except Exception as e2:
+                logger.error(f"회의 Task 생성 실패: {e2}")
+                return None
+        else:
+            logger.error(f"회의 Task 생성 실패: {e}")
+            return None
+
+    page_id = page["id"]
+    title_list = page["properties"][PROP["title"]]["title"]
+    name = title_list[0]["plain_text"] if title_list else task_name
+    logger.info(f"회의 Task 생성: {name} (priority={priority})")
+
+    # ── 페이지 본문 블록 추가 ────────────────────────────────────
+    body_blocks = []
+    # 내용(체크리스트) 블록
+    if content_md:
+        checklist_blocks = _parse_checklist_to_blocks(content_md)
+        if checklist_blocks:
+            body_blocks.append({
+                "object": "block", "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": "📋 To-do"}}]
+                },
+            })
+            body_blocks.extend(checklist_blocks)
+
+    if body_blocks:
+        try:
+            notion_client.blocks.children.append(
+                block_id=page_id, children=body_blocks
+            )
+        except Exception as be:
+            logger.warning(f"회의 Task 본문 블록 추가 실패 (기능에는 영향 없음): {be}")
+
+    return {"id": page_id, "name": name, "url": page["url"]}
+
+
+def append_meeting_task_relations(meeting_page_id: str, task_page_ids: list[str]) -> bool:
+    """
+    회의 페이지의 '관련과업' relation 속성에 task_page_ids를 추가(merge).
+
+    기존 relation 값을 읽어 합산한 뒤 업데이트하여 덮어쓰기 방지.
+    """
+    if not meeting_page_id or not task_page_ids:
+        return False
+    try:
+        page = notion_client.pages.retrieve(page_id=meeting_page_id)
+        # 관련과업 속성 이름 — meeting DB에 따라 다를 수 있으므로 탐색
+        relation_prop_name = None
+        for prop_name, prop_val in page["properties"].items():
+            if prop_val.get("type") == "relation":
+                relation_prop_name = prop_name
+                break  # 첫 번째 relation 속성 사용
+
+        if not relation_prop_name:
+            logger.warning(f"회의 페이지에 relation 속성 없음: {meeting_page_id}")
+            return False
+
+        existing_ids = [r["id"] for r in page["properties"][relation_prop_name].get("relation", [])]
+        merged_ids = list(set(existing_ids) | set(task_page_ids))
+
+        notion_client.pages.update(
+            page_id=meeting_page_id,
+            properties={
+                relation_prop_name: {
+                    "relation": [{"id": pid} for pid in merged_ids]
+                }
+            },
+        )
+        logger.info(f"회의 페이지 관련과업 업데이트: +{len(task_page_ids)}건 (total {len(merged_ids)}건)")
+        return True
+    except Exception as e:
+        logger.error(f"회의 관련과업 relation 업데이트 실패: {e}")
+        return False

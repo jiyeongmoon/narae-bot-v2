@@ -5,6 +5,7 @@ services/slack.py — 슬랙 모달·메시지 블록 빌더
 
 import datetime
 import json
+import re
 
 from services.notion import CLIENT_OPTIONS, PHASE_OPTIONS, CLIENT_TO_PREFIX, get_client_options_from_notion
 
@@ -793,3 +794,236 @@ def build_deadline_risk_message(tasks: list[dict]) -> list:
     })
 
     return blocks
+
+
+# ════════════════════════════════════════════════════════════
+# 5. 회의록 Task 검토 모달 + 알림 메시지
+# ════════════════════════════════════════════════════════════
+
+PRIORITY_OPTIONS_DISPLAY = ["P1 (긴급)", "P2 (보통)", "P3 (낮음)", "없음"]
+
+# "P1 (긴급)" → "P1" 등 역매핑 (modal submit 시 사용)
+PRIORITY_DISPLAY_TO_CODE = {
+    "P1 (긴급)": "P1",
+    "P2 (보통)": "P2",
+    "P3 (낮음)": "P3",
+    "없음": "",
+}
+
+# AI 출력 코드 "P1" → 표시 라벨 "P1 (긴급)"
+PRIORITY_CODE_TO_DISPLAY = {
+    "P1": "P1 (긴급)",
+    "P2": "P2 (보통)",
+    "P3": "P3 (낮음)",
+}
+
+
+def build_meeting_notification(session_id: str, filename: str, task_count: int) -> list:
+    """회의록 Task 검토 알림 메시지 블록."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"📋 *회의록 처리 완료 — Task 검토 요청*\n"
+                    f"파일: `{filename}`\n"
+                    f"추출된 Task: *{task_count}건*\n"
+                    f"담당자·우선순위·마감일을 확인 후 Notion에 등록해 주세요."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "🔍 Task 검토하기"},
+                    "action_id": "open_meeting_review_modal",
+                    "value": session_id,
+                    "style": "primary",
+                }
+            ],
+        },
+    ]
+
+
+def build_meeting_review_modal(
+    session_id: str,
+    tasks: list[dict],
+    managers: list[dict],
+    filename: str = "",
+    channel_id: str = "",
+) -> dict:
+    """
+    회의록 Task 검토 모달.
+
+    tasks  : 각 task — 업무명, 담당자(hint), 우선순위(hint), 마감일(hint), 발주처, 내용 포함
+    managers : [{"name": str, "notion_id": str}, ...]
+    """
+    # ── 담당자 옵션 빌드 ──────────────────────────────────────────
+    manager_options = [
+        {"text": {"type": "plain_text", "text": m["name"]}, "value": m["notion_id"]}
+        for m in managers
+        if m.get("notion_id")
+    ]
+    mgr_opts_with_none = [
+        {"text": {"type": "plain_text", "text": "— 미지정 —"}, "value": "__none__"},
+        *manager_options,
+    ]
+
+    # ── 우선순위 옵션 빌드 ────────────────────────────────────────
+    priority_opts = [
+        {"text": {"type": "plain_text", "text": p}, "value": p}
+        for p in PRIORITY_OPTIONS_DISPLAY
+    ]
+
+    # ── 헤더 블록 ─────────────────────────────────────────────────
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*📋 회의록 Task 검토* — `{filename}`\n"
+                    f"총 *{len(tasks)}건*. 담당자·우선순위·마감일을 확인 후 제출하세요.\n"
+                    f"_제외할 Task는 '이 Task 건너뛰기'를 체크하세요._"
+                ),
+            },
+        },
+        {"type": "divider"},
+    ]
+
+    # ── Task 별 블록 ─────────────────────────────────────────────
+    for i, task in enumerate(tasks):
+        task_name     = task.get("업무명", f"Task {i + 1}")
+        assignee_hint = task.get("담당자", "")
+        priority_hint = task.get("우선순위", "")
+        deadline_hint = task.get("마감일", "")
+        client_hint   = task.get("발주처", "")
+
+        hint_parts = []
+        if assignee_hint: hint_parts.append(f"담당자: {assignee_hint}")
+        if priority_hint: hint_parts.append(f"우선순위: {priority_hint}")
+        if deadline_hint: hint_parts.append(f"마감: {deadline_hint}")
+        if client_hint:   hint_parts.append(f"발주처: {client_hint}")
+        hint_text = " / ".join(hint_parts) if hint_parts else "AI 힌트 없음"
+
+        # 제목 + 힌트
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*[{i + 1}] {task_name}*"},
+        })
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"💡 AI 제안: {hint_text}"}],
+        })
+
+        # 담당자 선택 — 힌트 이름으로 initial_option 자동 매칭
+        initial_assignee: dict | None = None
+        if assignee_hint:
+            for opt in manager_options:
+                opt_name = opt["text"]["plain_text"]
+                if assignee_hint in opt_name or opt_name in assignee_hint:
+                    initial_assignee = opt
+                    break
+
+        blocks.append({
+            "type": "input",
+            "block_id": f"task_{i}_assignee",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "👤 담당자"},
+            "element": {
+                "type": "static_select",
+                "action_id": "assignee_select",
+                "placeholder": {"type": "plain_text", "text": "담당자 선택"},
+                "options": mgr_opts_with_none,
+                **({"initial_option": initial_assignee} if initial_assignee else {}),
+            },
+        })
+
+        # 우선순위 — 힌트 코드(P1/P2/P3)로 initial_option 자동 매칭
+        initial_priority: dict | None = None
+        priority_label = PRIORITY_CODE_TO_DISPLAY.get(priority_hint, "")
+        if priority_label:
+            for opt in priority_opts:
+                if opt["value"] == priority_label:
+                    initial_priority = opt
+                    break
+
+        blocks.append({
+            "type": "input",
+            "block_id": f"task_{i}_priority",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "🎯 우선순위"},
+            "element": {
+                "type": "static_select",
+                "action_id": "priority_select",
+                "placeholder": {"type": "plain_text", "text": "우선순위 선택"},
+                "options": priority_opts,
+                **({"initial_option": initial_priority} if initial_priority else {}),
+            },
+        })
+
+        # 마감일 — 유효한 YYYY-MM-DD 형식이면 initial_date 설정
+        deadline_elem: dict = {
+            "type": "datepicker",
+            "action_id": "deadline_pick",
+            "placeholder": {"type": "plain_text", "text": "날짜 선택"},
+        }
+        if deadline_hint and re.match(r"^\d{4}-\d{2}-\d{2}$", deadline_hint):
+            deadline_elem["initial_date"] = deadline_hint
+
+        blocks.append({
+            "type": "input",
+            "block_id": f"task_{i}_deadline",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "📅 마감일"},
+            "element": deadline_elem,
+        })
+
+        # 제외 체크박스
+        blocks.append({
+            "type": "input",
+            "block_id": f"task_{i}_exclude",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "🚫 제외"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "exclude_check",
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": "이 Task 건너뛰기"},
+                        "value": "exclude",
+                    }
+                ],
+            },
+        })
+
+        blocks.append({"type": "divider"})
+
+        # Slack 모달 블록 상한(100) 초과 방지
+        if len(blocks) >= 96:
+            blocks.append({
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": f"⚠️ Task가 많아 {i + 1}번까지만 표시됩니다. 나머지는 Notion에서 직접 확인하세요.",
+                }],
+            })
+            break
+
+    metadata = json.dumps(
+        {"session_id": session_id, "channel_id": channel_id},
+        ensure_ascii=False,
+    )
+
+    return {
+        "type": "modal",
+        "callback_id": "modal_meeting_review",
+        "private_metadata": metadata,
+        "title": {"type": "plain_text", "text": "📋 회의 Task 검토"},
+        "submit": {"type": "plain_text", "text": "Notion에 등록"},
+        "close": {"type": "plain_text", "text": "취소"},
+        "blocks": blocks,
+    }

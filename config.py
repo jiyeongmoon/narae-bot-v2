@@ -54,6 +54,13 @@ DROPBOX_APP_KEY = os.environ.get("DROPBOX_APP_KEY")
 DROPBOX_APP_SECRET = os.environ.get("DROPBOX_APP_SECRET")
 DROPBOX_REFRESH_TOKEN = os.environ.get("DROPBOX_REFRESH_TOKEN")
 
+# ── 회의록 Task 검토 API ─────────────────────────────────────────
+# meeting-bot → narae-bot 연동용 API 키 (Bearer 인증)
+NARAE_API_KEY = os.environ.get("NARAE_API_KEY", "")
+
+# Task 검토 요청 알림을 받을 Slack 사용자 ID (예: U078UNTQL5S)
+SLACK_REVIEW_USER_ID = os.environ.get("SLACK_REVIEW_USER_ID", "")
+
 # ── 프로젝트 폴더 체계 (SOP v2.4) ──────────────────────────────
 # 사업팀 표준 7대 상위 폴더 (Active Project - 하위 폴더 없음)
 NARE_STANDARD_FOLDERS = [

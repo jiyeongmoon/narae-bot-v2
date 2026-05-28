@@ -2,9 +2,14 @@
 import json, time
 from services.notion import (
     get_all_tasks, search_tasks, get_handover_data, notion_client,
-    _parse_task, get_my_tasks, get_task_todos, update_todo_checked
+    _parse_task, get_my_tasks, get_task_todos, update_todo_checked,
 )
-from services.slack import build_log_step_modal, build_task_select_modal, build_handover_message, build_error_message
+from services.slack import (
+    build_log_step_modal, build_task_select_modal,
+    build_handover_message, build_error_message,
+    build_meeting_review_modal,
+)
+from services.cache import get as cache_get
 
 def register_actions(app):
 
@@ -239,3 +244,49 @@ def register_actions(app):
         except Exception as e:
             logger.error(f"remind schedule err: {e}")
             if uid: client.chat_postMessage(channel=uid, text="❌ 리마인드 예약 중 오류가 발생했습니다.")
+
+    # ── 회의록 Task 검토 모달 열기 ─────────────────────────────────
+    @app.action("open_meeting_review_modal")
+    def handle_open_meeting_review_modal(ack, body, client, logger):
+        """
+        '🔍 Task 검토하기' 버튼 클릭 → 회의 Task 검토 모달 열기.
+        session_id는 버튼 value로 전달됨.
+        """
+        ack()
+        session_id = body.get("actions", [{}])[0].get("value", "")
+        channel_id = body.get("channel", {}).get("id", "")
+
+        session_data = cache_get(f"mtg:{session_id}")
+        if not session_data:
+            uid = body.get("user", {}).get("id")
+            client.chat_postMessage(
+                channel=uid or channel_id,
+                text="❌ 세션이 만료됐습니다 (24h 초과). 다시 처리를 시작해 주세요.",
+            )
+            return
+
+        tasks = session_data.get("tasks", [])
+
+        # Notion에서 실시간 사용자 목록 조회
+        managers: list[dict] = []
+        try:
+            users_resp = notion_client.users.list()
+            managers = [
+                {"name": u["name"], "notion_id": u["id"]}
+                for u in users_resp.get("results", [])
+                if u.get("type") == "person" and u.get("name")
+            ]
+        except Exception as e:
+            logger.warning(f"Notion 사용자 조회 실패: {e}")
+
+        try:
+            modal = build_meeting_review_modal(
+                session_id=session_id,
+                tasks=tasks,
+                managers=managers,
+                filename=session_data.get("filename", ""),
+                channel_id=channel_id,
+            )
+            client.views_open(trigger_id=body["trigger_id"], view=modal)
+        except Exception as e:
+            logger.error(f"회의 검토 모달 열기 실패: {e}")
