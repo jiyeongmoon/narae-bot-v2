@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import json, time
+import json, time, threading
 from services.notion import (
     get_all_tasks, search_tasks, get_handover_data, notion_client,
     _parse_task, get_my_tasks, get_task_todos, update_todo_checked,
@@ -10,6 +10,27 @@ from services.slack import (
     build_meeting_review_modal,
 )
 from services.cache import get as cache_get
+
+
+def _warm_todo_cache(tasks):
+    """선택 모달에 표시된 Task들의 To-do를 백그라운드로 미리 조회해 캐시에 적재한다.
+
+    사용자가 'Task 선택 → 다음 →'을 누르는 시점(수 초 뒤)에는
+    get_task_todos가 캐시 히트로 즉시 응답하므로, 제출 핸들러가
+    Slack 3초 제한을 넘지 않는다. 실패는 조용히 무시(예열은 best-effort).
+    """
+    def _run():
+        for t in (tasks or [])[:12]:
+            tid = t.get("id", "")
+            if not tid or tid.startswith("NEW_TASK"):
+                continue
+            try:
+                get_task_todos(tid)        # 캐시에 적재
+            except Exception:
+                pass
+            time.sleep(0.1)                # Notion 레이트리밋 완화
+    threading.Thread(target=_run, daemon=True).start()
+
 
 def register_actions(app):
 
@@ -36,6 +57,7 @@ def register_actions(app):
 
             logger.info(f"tasks={len(tasks)} user={rn} (assigned={sum(1 for t in tasks if t.get('is_assigned'))})")
             client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn))
+            _warm_todo_cache(tasks)
         except Exception as e: logger.error(f"modal err: {e}")
 
     @app.action("search_keyword")
@@ -62,11 +84,13 @@ def register_actions(app):
                         t.setdefault("is_assigned", False)
                 logger.info(f"search cleared, reset to {len(tasks)} tasks for {rn}")
                 client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn or ""))
+                _warm_todo_cache(tasks)
                 return
 
             tasks=search_tasks(kw, slack_display_name=rn)
             logger.info(f"search {kw} for {rn}: {len(tasks)}")
             client.views_update(view_id=vid, view=build_task_select_modal(tasks, user_real_name=rn or "", search_keyword=kw))
+            _warm_todo_cache(tasks)
         except Exception as e: logger.error(f"search err: {e}")
 
     @app.action("filter_assignee")
@@ -95,14 +119,15 @@ def register_actions(app):
             logger.info(f"filter assignee '{filter_name}': {len(tasks)} tasks")
             
             client.views_update(
-                view_id=view_id, 
+                view_id=view_id,
                 view=build_task_select_modal(
-                    tasks, 
-                    user_real_name=curr_rn, 
+                    tasks,
+                    user_real_name=curr_rn,
                     filter_user_id=selected_user_id,
                     filter_user_name=filter_name
                 )
             )
+            _warm_todo_cache(tasks)
         except Exception as e:
             logger.error(f"filter err: {e}")
 

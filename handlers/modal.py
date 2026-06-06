@@ -15,6 +15,7 @@ from services.notion import (
     create_task,
     get_notion_user_id,
     get_task_todos,
+    invalidate_task_todos,
     update_todo_checked,
     replace_text_pattern_todos,
     update_task_status,
@@ -296,6 +297,8 @@ def register_modals(app):
 
                         # 2-b. text_pattern(- [ ] 텍스트) 블록 → checked=True to_do로 변환
                         replace_text_pattern_todos(task_id, all_todos_now, c_ids, author_name)
+                        # 2-c. To-do 상태가 바뀌었으므로 캐시 무효화 (다음 조회가 최신 반영)
+                        invalidate_task_todos(task_id)
                     except Exception as te:
                         logger.warning(f"To-do 업데이트 무시됨: {te}")
 

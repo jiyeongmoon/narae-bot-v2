@@ -55,7 +55,12 @@ CLIENT_TO_PREFIX = {
 
 def get_client_options_from_notion() -> list[str]:
     """Notion Task DB의 발주처(Client) select 속성에서 실제 옵션 목록을 가져옵니다.
-    실패 시 하드코딩된 CLIENT_OPTIONS를 반환합니다."""
+    실패 시 하드코딩된 CLIENT_OPTIONS를 반환합니다.
+
+    새 Task 모달(3초 응답 경로)에서 호출되므로 결과를 캐싱한다."""
+    cached = cache_get("client_options")
+    if cached is not None:
+        return cached
     try:
         from config import NOTION_TASK_DB_ID
         db = notion_client.databases.retrieve(database_id=NOTION_TASK_DB_ID)
@@ -68,7 +73,9 @@ def get_client_options_from_notion() -> list[str]:
             opts = [o["name"] for o in client_prop.get("multi_select", {}).get("options", [])]
         else:
             opts = []
-        return opts if opts else CLIENT_OPTIONS
+        result = opts if opts else CLIENT_OPTIONS
+        cache_set("client_options", result, ttl=600)
+        return result
     except Exception as e:
         logger.warning(f"Notion 발주처 옵션 로드 실패, 기본값 사용: {e}")
         return CLIENT_OPTIONS
@@ -725,12 +732,38 @@ def save_log(task_id, task_name, log_date, completed, todo_add,
 append_daily_log = save_log
 
 
-def get_task_todos(task_id: str) -> list[dict]:
+# To-do 조회 캐시 설정 ──────────────────────────────────────────
+# Slack 인터랙션의 3초 응답 경로에서 호출되므로, 결과를 짧게 캐싱하고
+# Notion 호출 횟수를 제한해 최악의 경우에도 빠르게 반환한다.
+_TODO_CACHE_TTL   = 120  # 초
+_TODO_MAX_DEPTH   = 3     # 재귀 깊이 상한 (토글 중첩 대응)
+_TODO_MAX_CALLS   = 10    # blocks.children.list 총 호출 상한 (지연 안전장치)
+
+
+def get_task_todos(task_id: str, use_cache: bool = True) -> list[dict]:
+    """Task 페이지의 To-do 목록을 조회한다.
+
+    ⚠️ 이 함수는 Slack 모달의 3초 응답 경로(제출/단계 전환)에서 호출되므로
+    절대 느려지면 안 된다. 그래서:
+      - 결과를 TTL(_TODO_CACHE_TTL) 캐시에 저장해 반복 호출을 즉시 응답
+      - Notion 호출 횟수(_TODO_MAX_CALLS)·깊이(_TODO_MAX_DEPTH)를 제한
+    To-do를 수정한 뒤에는 invalidate_task_todos(task_id)로 캐시를 비울 것.
+    """
+    cache_key = f"task_todos:{task_id}"
+    if use_cache:
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     TODO_PATTERN = re.compile(r"^\s*-\s*\[(x|o| )\]\s*(.+)$", re.IGNORECASE)
+    calls = {"n": 0}
+
     def _fetch(bid, depth=0):
-        if depth > 3: return []
+        if depth > _TODO_MAX_DEPTH or calls["n"] >= _TODO_MAX_CALLS:
+            return []
         todos = []
         try:
+            calls["n"] += 1
             resp = notion_client.blocks.children.list(block_id=bid)
             for b in resp.get("results", []):
                 bt = b.get("type", "")
@@ -742,10 +775,23 @@ def get_task_todos(task_id: str) -> list[dict]:
                     for i, ln in enumerate(txt.splitlines()):
                         m = TODO_PATTERN.match(ln)
                         if m: todos.append({"id": f"{b['id']}::line_{i}", "text": m.group(2).strip(), "checked": m.group(1).lower() in ("x","o"), "block_type": "text_pattern"})
-                if b.get("has_children"): todos.extend(_fetch(b["id"], depth+1))
+                if b.get("has_children") and calls["n"] < _TODO_MAX_CALLS:
+                    todos.extend(_fetch(b["id"], depth+1))
         except Exception: pass
         return todos
-    return _fetch(task_id)
+
+    result = _fetch(task_id)
+    if calls["n"] >= _TODO_MAX_CALLS:
+        logger.warning(f"get_task_todos: 호출 상한({_TODO_MAX_CALLS}) 도달 — 일부 To-do 누락 가능 ({task_id})")
+    if use_cache:
+        cache_set(cache_key, result, ttl=_TODO_CACHE_TTL)
+    return result
+
+
+def invalidate_task_todos(task_id: str):
+    """To-do를 수정한 뒤 캐시를 비워 다음 조회가 최신 상태를 반영하게 한다."""
+    from services.cache import delete as _cache_delete
+    _cache_delete(f"task_todos:{task_id}")
 
 
 def update_todo_checked(block_id: str, checked: bool, author_name: str = "") -> bool:
