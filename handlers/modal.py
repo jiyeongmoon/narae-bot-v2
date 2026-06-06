@@ -484,6 +484,11 @@ def register_modals(app):
         )
         full_text = summary + "\n" + "\n".join(lines) if lines else summary
 
+        # 생성된 회의록 링크 추가
+        if meeting_page_url:
+            link_label = meeting_title or "회의록 보기"
+            full_text += f"\n\n📋 *회의록*: <{meeting_page_url}|{link_label}>"
+
         # channel_id가 유효하면 채널에, 아니면 DM으로
         target = channel_id if channel_id else user_id
         try:
