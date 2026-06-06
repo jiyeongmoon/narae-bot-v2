@@ -8,10 +8,14 @@ app.py — 나래봇 메인 진입점
 
 import os
 import logging
+import datetime
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from flask import Flask
 import threading
+
+# 프로세스 기동 시각 (배포 검증용) — 이 시각이 최근이면 새로 재배포된 것
+_STARTED_AT = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 from config import validate_config, SLACK_BOT_TOKEN, SLACK_APP_TOKEN, NARAE_API_KEY, SLACK_REVIEW_USER_ID
 from handlers.command import register_commands
@@ -59,7 +63,14 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/health", methods=["GET"])
 def health():
-    return {"status": "ok", "service": "나래봇(SocketMode)"}, 200
+    # Railway가 배포 시 자동 주입하는 커밋 정보로 "어느 버전이 떠 있는지" 노출
+    return {
+        "status": "ok",
+        "service": "나래봇(SocketMode)",
+        "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:12],
+        "branch": os.environ.get("RAILWAY_GIT_BRANCH", "unknown"),
+        "started_at": _STARTED_AT,
+    }, 200
 
 
 @flask_app.route("/api/meeting-review", methods=["POST"])
