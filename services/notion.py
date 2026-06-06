@@ -1234,6 +1234,8 @@ def create_meeting_task(
     project_page_id: str = None,
     meeting_title: str = "",
     meeting_page_url: str = "",
+    assignee_name: str = "",
+    phase: str = "",
 ) -> dict | None:
     """
     회의록 리뷰 모달에서 확정된 Task를 Notion Task DB에 생성.
@@ -1243,6 +1245,8 @@ def create_meeting_task(
     project_page_id : Notion 프로젝트 페이지 ID (relation 연결)
     meeting_title   : 관련 회의록 제목 (본문 컨텍스트용)
     meeting_page_url: 관련 회의록 Notion URL (본문 링크용)
+    assignee_name   : 담당자 표시명 (본문 [TASK 상세 내역]용 — 속성 연결은 assignee_notion_id로)
+    phase           : 현재단계 (있으면 본문 [TASK 상세 내역]에 표시)
     """
     properties: dict = {
         PROP["title"]: {
@@ -1330,6 +1334,31 @@ def create_meeting_task(
             "paragraph": {"rich_text": link_rt},
         })
         body_blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+    # ── [TASK 상세 내역] 블록 (담당자·발주처·현재단계 자동 채움) ──────
+    _dash = "—"
+    detail_rows = [
+        ("담당자", (assignee_name or "").strip() or _dash),
+        ("발주처", (client_name or "").strip() or _dash),
+        ("현재단계", (phase or "").strip() or _dash),
+    ]
+    body_blocks.append({
+        "object": "block", "type": "heading_3",
+        "heading_3": {
+            "rich_text": [{"type": "text", "text": {"content": "📌 [TASK 상세 내역]"}}]
+        },
+    })
+    for label, value in detail_rows:
+        body_blocks.append({
+            "object": "block", "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": f"{label} : "},
+                     "annotations": {"bold": True}},
+                    {"type": "text", "text": {"content": value}},
+                ]
+            },
+        })
 
     # 내용(체크리스트) 블록
     if content_md:

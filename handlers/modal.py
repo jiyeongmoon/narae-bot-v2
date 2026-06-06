@@ -411,8 +411,10 @@ def register_modals(app):
                       .get("selected_option") or {}
             )
             assignee_notion_id = assignee_opt.get("value", "")
+            assignee_name = (assignee_opt.get("text") or {}).get("text", "") or ""
             if assignee_notion_id == "__none__":
                 assignee_notion_id = ""
+                assignee_name = ""
 
             # ── 우선순위 ─────────────────────────────────────────
             priority_opt = (
@@ -442,6 +444,8 @@ def register_modals(app):
                     project_page_id=task.get("project_page_id") or None,
                     meeting_title=meeting_title,
                     meeting_page_url=meeting_page_url,
+                    assignee_name=assignee_name,
+                    phase=task.get("현재단계") or "",
                 )
                 if result:
                     created.append(result)
