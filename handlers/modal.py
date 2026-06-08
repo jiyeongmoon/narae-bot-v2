@@ -474,14 +474,12 @@ def register_modals(app):
                 lines.append(f"• <{t['url']}|{t['name']}>{who}")
             else:
                 lines.append(f"• {t['name']}{who}")
-        for name in skipped:
-            lines.append(f"• ~{name}~ (건너뜀)")
+        # 제외(건너뜀)한 Task는 알림에 표시하지 않음
         for name in failed:
             lines.append(f"• ❌ {name} (생성 실패)")
 
         summary = (
             f"✅ *회의 Task 등록 완료* — {len(created)}건 생성"
-            + (f", {len(skipped)}건 건너뜀" if skipped else "")
             + (f", {len(failed)}건 실패" if failed else "")
         )
         full_text = summary + "\n" + "\n".join(lines) if lines else summary
