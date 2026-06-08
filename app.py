@@ -105,7 +105,7 @@ def api_meeting_review():
     import uuid
     from flask import request, jsonify
     from services.cache import set as cache_set
-    from services.slack import build_meeting_notification
+    from services.slack import build_meeting_notification, build_meeting_only_notification
 
     # ── API 키 인증 ──────────────────────────────────────────────
     if NARAE_API_KEY:
@@ -140,13 +140,19 @@ def api_meeting_review():
     review_target = SLACK_REVIEW_USER_ID
     if review_target:
         try:
-            blocks = build_meeting_notification(session_id, filename, len(tasks))
+            if tasks:
+                blocks = build_meeting_notification(session_id, filename, len(tasks))
+                text = f"📋 회의록 Task 검토 요청: {filename} ({len(tasks)}건)"
+            else:
+                # Task가 0건이어도 회의록만 등록됐음을 알림 (검토 버튼 없음)
+                blocks = build_meeting_only_notification(filename, meeting_title, meeting_page_url)
+                text = f"📋 회의록 등록 완료 (Task 없음): {filename}"
             bolt_app.client.chat_postMessage(
                 channel=review_target,
-                text=f"📋 회의록 Task 검토 요청: {filename} ({len(tasks)}건)",
+                text=text,
                 blocks=blocks,
             )
-            logging.info(f"[meeting-review] Slack 알림 발송 → {review_target}")
+            logging.info(f"[meeting-review] Slack 알림 발송 → {review_target} (tasks={len(tasks)})")
         except Exception as e:
             logging.error(f"[meeting-review] Slack 알림 실패: {e}")
 

@@ -448,6 +448,7 @@ def register_modals(app):
                     phase=task.get("현재단계") or "",
                 )
                 if result:
+                    result["assignee"] = assignee_name  # 완료 메시지 표시용
                     created.append(result)
                     logger.info(f"회의 Task 생성 완료: {task_name}")
                 else:
@@ -468,10 +469,11 @@ def register_modals(app):
         # ── 결과 메시지 ───────────────────────────────────────────
         lines = []
         for t in created:
+            who = f" ({t['assignee']})" if t.get("assignee") else ""
             if t.get("url"):
-                lines.append(f"• <{t['url']}|{t['name']}>")
+                lines.append(f"• <{t['url']}|{t['name']}>{who}")
             else:
-                lines.append(f"• {t['name']}")
+                lines.append(f"• {t['name']}{who}")
         for name in skipped:
             lines.append(f"• ~{name}~ (건너뜀)")
         for name in failed:

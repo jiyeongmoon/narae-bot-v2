@@ -848,6 +848,28 @@ def build_meeting_notification(session_id: str, filename: str, task_count: int) 
     ]
 
 
+def build_meeting_only_notification(filename: str, meeting_title: str = "",
+                                    meeting_page_url: str = "") -> list:
+    """추출된 Task가 없을 때(회의록만 등록) 보내는 알림 블록. 검토 버튼 없음."""
+    if meeting_page_url:
+        link = f"<{meeting_page_url}|{meeting_title or '회의록 보기'}>"
+    else:
+        link = meeting_title or "(링크 없음)"
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"📋 *회의록 등록 완료 — 추출된 Task 없음*\n"
+                    f"파일: `{filename}`\n"
+                    f"회의록: {link}"
+                ),
+            },
+        },
+    ]
+
+
 def build_meeting_review_modal(
     session_id: str,
     tasks: list[dict],
