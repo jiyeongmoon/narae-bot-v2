@@ -42,3 +42,11 @@ def clear_prefix(prefix: str):
         keys = [k for k in _store if k.startswith(prefix)]
         for k in keys:
             del _store[k]
+
+
+def keys(prefix: str = "") -> list:
+    """prefix로 시작하는 (만료 안 된) 키 목록."""
+    now = time.time()
+    with _lock:
+        return [k for k, v in _store.items()
+                if k.startswith(prefix) and now < v["expires"]]

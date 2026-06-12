@@ -22,6 +22,7 @@ from services.notion import (
     CLIENT_TO_PREFIX,
     create_meeting_task,
     append_meeting_task_relations,
+    append_task_delta,
 )
 from services.slack import (
     build_log_step_modal,
@@ -390,6 +391,7 @@ def register_modals(app):
         created: list[dict] = []
         skipped: list[str] = []
         failed: list[str] = []
+        merged: list[dict] = []
 
         for i, task in enumerate(tasks):
             task_name = task.get("업무명", f"Task {i + 1}")
@@ -402,6 +404,30 @@ def register_modals(app):
             )
             if excl_opts:
                 skipped.append(task_name)
+                continue
+
+            # ── 병합 체크 (기존 Task에 누적, 신규 생성 안 함) ──────
+            merge_opts = (
+                values.get(f"task_{i}_merge", {})
+                      .get("merge_check", {})
+                      .get("selected_options", [])
+            )
+            if merge_opts and merge_opts[0].get("value"):
+                target_id = merge_opts[0]["value"]
+                try:
+                    r = append_task_delta(
+                        task_page_id=target_id,
+                        content_md=task.get("내용", ""),
+                        main_points=task.get("주요내용", ""),
+                        references=task.get("참고", ""),
+                        meeting_title=meeting_title,
+                        meeting_page_url=meeting_page_url,
+                    )
+                    merged.append({"name": task_name, "ok": r.get("ok", False)})
+                    logger.info(f"기존 Task 병합: {task_name} → {target_id} (todo+{r.get('todo_added', 0)})")
+                except Exception as e:
+                    failed.append(task_name)
+                    logger.error(f"병합 실패: {task_name} — {e}")
                 continue
 
             # ── 담당자 ───────────────────────────────────────────
@@ -477,11 +503,15 @@ def register_modals(app):
             else:
                 lines.append(f"• {t['name']}{who}")
         # 제외(건너뜀)한 Task는 알림에 표시하지 않음
+        for m in merged:
+            mark = "↳ 기존 Task에 병합" if m.get("ok") else "↳ 병합 시도(확인 필요)"
+            lines.append(f"• {mark}: {m['name']}")
         for name in failed:
             lines.append(f"• ❌ {name} (생성 실패)")
 
         summary = (
             f"✅ *회의 Task 등록 완료* — {len(created)}건 생성"
+            + (f", {len(merged)}건 병합" if merged else "")
             + (f", {len(failed)}건 실패" if failed else "")
         )
         full_text = summary + "\n" + "\n".join(lines) if lines else summary

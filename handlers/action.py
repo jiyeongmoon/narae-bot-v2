@@ -333,6 +333,36 @@ def register_actions(app):
         except Exception as e:
             logger.warning(f"Notion 사용자 조회 실패 (빈 목록으로 진행): {e}")
 
+        # 3.5 병합 후보 계산: 기존 Notion Task(병합 대상) + 대기 중 유사 Task(안내만)
+        from services.notion import find_meeting_task_merge_candidate, norm_task_name
+        from services.cache import keys as cache_keys
+        pending_others = []
+        for k in cache_keys("mtg:"):
+            if k == f"mtg:{session_id}":
+                continue
+            d = cache_get(k) or {}
+            for t in d.get("tasks", []):
+                pending_others.append((t.get("project_page_id", ""),
+                                       norm_task_name(t.get("업무명", "")),
+                                       d.get("meeting_title", "") or d.get("filename", "")))
+        for t in tasks:
+            try:
+                cand = find_meeting_task_merge_candidate(
+                    t.get("project_page_id", ""), t.get("업무명", ""), t.get("산출물명사", ""))
+            except Exception as e:
+                logger.warning(f"병합 후보 계산 실패: {e}")
+                cand = None
+            if cand:
+                t["_merge_candidate"] = cand
+            else:
+                nn = norm_task_name(t.get("업무명", ""))
+                pid = t.get("project_page_id", "")
+                for (ppid, pnn, ptitle) in pending_others:
+                    if pid and ppid == pid and nn and (nn in pnn or pnn in nn):
+                        t["_pending_notice"] = (f"유사한 *대기 중* Task 있음 ({ptitle}). "
+                                                f"먼저 그걸 등록하면 여기서 병합할 수 있습니다.")
+                        break
+
         # 4. 실제 모달로 교체
         try:
             modal = build_meeting_review_modal(

@@ -1407,6 +1407,119 @@ def create_meeting_task(
     return {"id": page_id, "name": name, "url": page["url"]}
 
 
+_ACTIVE_STATUSES_FOR_MERGE = ["🙏 진행 예정", "🚀 진행 중", "💡 피드백"]
+
+
+def norm_task_name(s: str) -> str:
+    """업무명 비교용 정규화 (공백·언더스코어·괄호 등 제거 후 소문자)."""
+    return re.sub(r"[\s_\-\[\]()·,]", "", (s or "")).lower()
+
+
+def find_meeting_task_merge_candidate(project_page_id: str, task_name: str,
+                                      sanchulmul: str = "") -> dict | None:
+    """같은 프로젝트의 활성 Task 중 '같은 산출물'로 보이는 후보 1건 반환 (없으면 None).
+    회의록 Task 병합(검토 모달)에서 '기존에 병합' 대상 탐지용."""
+    if not project_page_id:
+        return None
+    try:
+        resp = notion_client.databases.query(
+            database_id=NOTION_TASK_DB_ID,
+            filter={"and": [
+                {"property": PROP["project"], "relation": {"contains": project_page_id}},
+                {"or": [{"property": PROP["status"], "status": {"equals": s}}
+                        for s in _ACTIVE_STATUSES_FOR_MERGE]},
+            ]},
+            page_size=50,
+        )
+    except Exception as e:
+        logger.warning(f"병합 후보 조회 실패: {e}")
+        return None
+    n_name = norm_task_name(task_name)
+    n_sanchul = norm_task_name(sanchulmul)
+    for p in resp.get("results", []):
+        tl = p["properties"].get(PROP["title"], {}).get("title", [])
+        cname = tl[0]["plain_text"] if tl else ""
+        n_cand = norm_task_name(cname)
+        if not n_cand:
+            continue
+        same = (len(n_sanchul) >= 2 and n_sanchul in n_cand) \
+            or (n_name and (n_name in n_cand or n_cand in n_name))
+        if same:
+            return {"id": p["id"], "name": cname, "url": p.get("url", "")}
+    return None
+
+
+def append_task_delta(task_page_id: str, content_md: str = "", main_points: str = "",
+                      references: str = "", meeting_title: str = "",
+                      meeting_page_url: str = "") -> dict:
+    """기존 Task 페이지에 다른 회의의 델타를 누적(append).
+    - To-do: 기존과 중복 제거 후 새 것만
+    - 주요내용/참고: 출처 회의 인라인 태그 붙여 추가
+    - 회의록 링크 추가
+    """
+    tag = f" ({meeting_title})" if meeting_title else ""
+    blocks: list[dict] = [
+        {"object": "block", "type": "divider", "divider": {}},
+        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [
+            {"type": "text", "text": {"content": f"➕ 추가 회의 반영: {meeting_title or '추가분'}"},
+             "annotations": {"bold": True, "italic": True}}]}},
+    ]
+
+    # 1) To-do 중복 제거 후 추가
+    todo_added = 0
+    if content_md:
+        try:
+            existing = {norm_task_name(t["text"]) for t in get_task_todos(task_page_id)}
+        except Exception:
+            existing = set()
+        new_blocks = []
+        for b in _parse_checklist_to_blocks(content_md):
+            if b.get("type") == "to_do":
+                txt = "".join(rt.get("text", {}).get("content", "") for rt in b["to_do"]["rich_text"])
+                if norm_task_name(txt) in existing:
+                    continue
+                todo_added += 1
+            new_blocks.append(b)
+        if new_blocks:
+            blocks.append({"object": "block", "type": "heading_3", "heading_3": {
+                "rich_text": [{"type": "text", "text": {"content": "📋 To-do (추가)"}}]}})
+            blocks.extend(new_blocks)
+
+    # 2) 주요내용 / 참고 — 출처 인라인 태그
+    def _tagged_bullets(md: str) -> list[dict]:
+        out = []
+        for ln in (md or "").splitlines():
+            t = ln.strip().lstrip("-").lstrip("*").strip()
+            if not t:
+                continue
+            out.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {
+                "rich_text": [{"type": "text", "text": {"content": (t + tag)[:1900]}}]}})
+        return out
+    for heading, md in (("📌 주요내용 (추가)", main_points), ("📎 참고사항 (추가)", references)):
+        items = _tagged_bullets(md)
+        if items:
+            blocks.append({"object": "block", "type": "heading_3", "heading_3": {
+                "rich_text": [{"type": "text", "text": {"content": heading}}]}})
+            blocks.extend(items)
+
+    # 3) 회의록 링크
+    if meeting_page_url:
+        blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [
+            {"type": "text", "text": {"content": "📋 관련 회의록: "}},
+            {"type": "text", "text": {"content": meeting_title or "회의록", "link": {"url": meeting_page_url}}}]}})
+
+    try:
+        notion_client.blocks.children.append(block_id=task_page_id, children=blocks)
+    except Exception as e:
+        logger.error(f"Task 델타 append 실패: {e}")
+        return {"ok": False, "todo_added": 0}
+    try:
+        invalidate_task_todos(task_page_id)
+    except Exception:
+        pass
+    return {"ok": True, "todo_added": todo_added}
+
+
 def append_meeting_task_relations(meeting_page_id: str, task_page_ids: list[str]) -> bool:
     """
     회의 페이지의 '관련과업' relation 속성에 task_page_ids를 추가(merge).

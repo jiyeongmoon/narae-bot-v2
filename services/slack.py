@@ -1022,6 +1022,31 @@ def build_meeting_review_modal(
             },
         })
 
+        # 🔗 병합: 같은 산출물의 기존 Notion Task 후보가 있으면 체크박스(기본 체크)
+        cand = task.get("_merge_candidate")
+        if cand:
+            merge_opt = {
+                "text": {"type": "plain_text", "text": f"기존 『{cand['name'][:55]}』에 병합"},
+                "value": cand["id"],
+            }
+            blocks.append({
+                "type": "input",
+                "block_id": f"task_{i}_merge",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "🔗 병합"},
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": "merge_check",
+                    "options": [merge_opt],
+                    "initial_options": [merge_opt],
+                },
+            })
+        elif task.get("_pending_notice"):
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"⚠️ {task['_pending_notice']}"}],
+            })
+
         blocks.append({"type": "divider"})
 
         # Slack 모달 블록 상한(100) 초과 방지
