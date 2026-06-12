@@ -446,6 +446,8 @@ def register_modals(app):
                     meeting_page_url=meeting_page_url,
                     assignee_name=assignee_name,
                     phase=task.get("현재단계") or "",
+                    main_points=task.get("주요내용") or "",
+                    references=task.get("참고") or "",
                 )
                 if result:
                     result["assignee"] = assignee_name  # 완료 메시지 표시용

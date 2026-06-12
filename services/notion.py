@@ -1236,6 +1236,8 @@ def create_meeting_task(
     meeting_page_url: str = "",
     assignee_name: str = "",
     phase: str = "",
+    main_points: str = "",
+    references: str = "",
 ) -> dict | None:
     """
     회의록 리뷰 모달에서 확정된 Task를 Notion Task DB에 생성.
@@ -1371,6 +1373,28 @@ def create_meeting_task(
                 },
             })
             body_blocks.extend(checklist_blocks)
+
+    # 📌 주요내용 / 📎 참고사항 구획 (일반 불릿)
+    def _bullets(md: str) -> list[dict]:
+        blocks = []
+        for ln in (md or "").splitlines():
+            t = ln.strip().lstrip("-").lstrip("*").strip()
+            if not t:
+                continue
+            blocks.append({
+                "object": "block", "type": "bulleted_list_item",
+                "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": t[:1900]}}]},
+            })
+        return blocks
+
+    for heading, md in (("📌 주요내용", main_points), ("📎 참고사항", references)):
+        items = _bullets(md)
+        if items:
+            body_blocks.append({
+                "object": "block", "type": "heading_3",
+                "heading_3": {"rich_text": [{"type": "text", "text": {"content": heading}}]},
+            })
+            body_blocks.extend(items)
 
     if body_blocks:
         try:
