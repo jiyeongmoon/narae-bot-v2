@@ -387,6 +387,25 @@ def register_modals(app):
         meeting_page_url = session_data.get("meeting_page_url", "")
         meeting_title    = session_data.get("meeting_title", "")
         values = body.get("view", {}).get("state", {}).get("values", {})
+        loose_todos = session_data.get("loose_todos", []) or []
+
+        # ── To-do 라우팅 파싱 (산출물 없는 단독 항목 → 어느 Task로) ──
+        new_task_extra: dict = {}     # 새 Task 인덱스 → [todo, ...]
+        existing_appends: list = []   # [(task_page_id, todo), ...]
+        unassigned_todos: list = []   # 미배정 → Slack 알림
+        for j, todo in enumerate(loose_todos):
+            opt = (values.get(f"todo_{j}", {}).get("todo_route", {})
+                   .get("selected_option") or {})
+            val = opt.get("value", "none")
+            if val.startswith("new:"):
+                try:
+                    new_task_extra.setdefault(int(val.split(":", 1)[1]), []).append(str(todo))
+                except ValueError:
+                    unassigned_todos.append(str(todo))
+            elif val.startswith("exist:"):
+                existing_appends.append((val.split(":", 1)[1], str(todo)))
+            else:
+                unassigned_todos.append(str(todo))
 
         created: list[dict] = []
         skipped: list[str] = []
@@ -458,6 +477,12 @@ def register_modals(app):
                       .get("selected_date", "")
             ) or ""
 
+            # 이 Task에 배정된 단독 To-do를 내용(체크리스트)에 합침
+            _content = task.get("내용", "")
+            _extra = new_task_extra.pop(i, [])
+            if _extra:
+                _content = (_content + "\n" + "\n".join(f"- [ ] {t}" for t in _extra)).strip()
+
             # ── Notion Task 생성 ─────────────────────────────────
             try:
                 result = create_meeting_task(
@@ -466,7 +491,7 @@ def register_modals(app):
                     priority=priority_code or None,
                     deadline=deadline or None,
                     client_name=task.get("발주처") or None,
-                    content_md=task.get("내용", ""),
+                    content_md=_content,
                     project_page_id=task.get("project_page_id") or None,
                     meeting_title=meeting_title,
                     meeting_page_url=meeting_page_url,
@@ -485,6 +510,20 @@ def register_modals(app):
             except Exception as e:
                 failed.append(task_name)
                 logger.error(f"회의 Task 생성 예외: {task_name} — {e}")
+
+        # ── 스킵/병합된 Task로 보낸 To-do는 미배정으로 회수 ──────
+        for _lst in new_task_extra.values():
+            unassigned_todos.extend(_lst)
+
+        # ── 기존 Task에 배정된 단독 To-do를 그 Task에 append ──────
+        todo_appended = 0
+        for (pid, todo) in existing_appends:
+            try:
+                append_task_delta(task_page_id=pid, content_md=f"- [ ] {todo}",
+                                  meeting_title=meeting_title, meeting_page_url=meeting_page_url)
+                todo_appended += 1
+            except Exception as e:
+                logger.warning(f"To-do append 실패: {todo} → {pid} — {e}")
 
         # ── 회의 페이지 관련과업 relation 업데이트 ────────────────
         if meeting_page_id and created:
@@ -512,9 +551,14 @@ def register_modals(app):
         summary = (
             f"✅ *회의 Task 등록 완료* — {len(created)}건 생성"
             + (f", {len(merged)}건 병합" if merged else "")
+            + (f", To-do {todo_appended}건 추가" if todo_appended else "")
             + (f", {len(failed)}건 실패" if failed else "")
         )
         full_text = summary + "\n" + "\n".join(lines) if lines else summary
+
+        # 미배정 To-do (어느 Task에도 안 넣은 산출물 없는 항목) — 알림으로만
+        if unassigned_todos:
+            full_text += "\n\n✅ *To-do (미배정)*\n" + "\n".join(f"• {t}" for t in unassigned_todos)
 
         # 생성된 회의록 링크 추가
         if meeting_page_url:

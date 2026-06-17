@@ -1449,6 +1449,32 @@ def find_meeting_task_merge_candidate(project_page_id: str, task_name: str,
     return None
 
 
+def get_active_tasks_by_projects(project_page_ids: list) -> list:
+    """주어진 프로젝트들의 활성 Task 목록 [{id, name}] — To-do 배정 드롭다운용."""
+    out, seen = [], set()
+    for pid in [p for p in (project_page_ids or []) if p]:
+        try:
+            resp = notion_client.databases.query(
+                database_id=NOTION_TASK_DB_ID,
+                filter={"and": [
+                    {"property": PROP["project"], "relation": {"contains": pid}},
+                    {"or": [{"property": PROP["status"], "status": {"equals": s}}
+                            for s in _ACTIVE_STATUSES_FOR_MERGE]},
+                ]},
+                page_size=25,
+            )
+        except Exception as e:
+            logger.warning(f"활성 Task 조회 실패: {e}")
+            continue
+        for p in resp.get("results", []):
+            if p["id"] in seen:
+                continue
+            seen.add(p["id"])
+            tl = p["properties"].get(PROP["title"], {}).get("title", [])
+            out.append({"id": p["id"], "name": tl[0]["plain_text"] if tl else "(제목없음)"})
+    return out
+
+
 def append_task_delta(task_page_id: str, content_md: str = "", main_points: str = "",
                       references: str = "", meeting_title: str = "",
                       meeting_page_url: str = "") -> dict:

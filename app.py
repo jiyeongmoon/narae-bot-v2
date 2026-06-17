@@ -123,6 +123,7 @@ def api_meeting_review():
     meeting_page_id = data.get("meeting_page_id", "")
     meeting_page_url = data.get("meeting_page_url", "")
     meeting_title   = data.get("meeting_title", "")
+    loose_todos     = data.get("일정메모", []) or []
 
     # ── 세션 데이터 캐싱 (TTL: 24h) ─────────────────────────────
     cache_set(f"mtg:{session_id}", {
@@ -132,6 +133,7 @@ def api_meeting_review():
         "meeting_page_id":  meeting_page_id,
         "meeting_page_url": meeting_page_url,
         "meeting_title":    meeting_title,
+        "loose_todos":      loose_todos,
     }, ttl=86400)
 
     logging.info(f"[meeting-review] 세션 캐싱 완료: {session_id} ({len(tasks)}건, {filename})")

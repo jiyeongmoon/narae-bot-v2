@@ -334,7 +334,8 @@ def register_actions(app):
             logger.warning(f"Notion 사용자 조회 실패 (빈 목록으로 진행): {e}")
 
         # 3.5 병합 후보 계산: 기존 Notion Task(병합 대상) + 대기 중 유사 Task(안내만)
-        from services.notion import find_meeting_task_merge_candidate, norm_task_name
+        from services.notion import (find_meeting_task_merge_candidate, norm_task_name,
+                                      get_active_tasks_by_projects)
         from services.cache import keys as cache_keys
         pending_others = []
         for k in cache_keys("mtg:"):
@@ -363,6 +364,14 @@ def register_actions(app):
                                                 f"먼저 그걸 등록하면 여기서 병합할 수 있습니다.")
                         break
 
+        # 3.6 To-do 배정 드롭다운용: 이번 회의 프로젝트들의 활성 Task
+        proj_ids = list({t.get("project_page_id", "") for t in tasks if t.get("project_page_id")})
+        try:
+            active_tasks_for_assign = get_active_tasks_by_projects(proj_ids)
+        except Exception as e:
+            logger.warning(f"활성 Task 조회 실패: {e}")
+            active_tasks_for_assign = []
+
         # 4. 실제 모달로 교체
         try:
             modal = build_meeting_review_modal(
@@ -371,6 +380,8 @@ def register_actions(app):
                 managers=managers,
                 filename=session_data.get("filename", ""),
                 channel_id=channel_id,
+                loose_todos=session_data.get("loose_todos", []),
+                active_tasks=active_tasks_for_assign,
             )
             client.views_update(view_id=view_id, view=modal)
         except Exception as e:

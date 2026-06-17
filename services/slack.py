@@ -876,6 +876,8 @@ def build_meeting_review_modal(
     managers: list[dict],
     filename: str = "",
     channel_id: str = "",
+    loose_todos: list = None,
+    active_tasks: list = None,
 ) -> dict:
     """
     회의록 Task 검토 모달.
@@ -1059,6 +1061,38 @@ def build_meeting_review_modal(
                 }],
             })
             break
+
+    # ── ✅ To-do (산출물 없는 단독 항목 — 어느 Task에 넣을지 배정) ──────
+    loose_todos = loose_todos or []
+    active_tasks = active_tasks or []
+    if loose_todos and len(blocks) < 88:
+        blocks.append({"type": "divider"})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn",
+            "text": ("*✅ To-do (산출물 없는 항목)*\n"
+                     "_각 항목을 어느 Task에 넣을지 선택하세요. 미배정은 알림으로만 전달됩니다._")}})
+        route_opts = [{"text": {"type": "plain_text", "text": "미배정 (알림만)"}, "value": "none"}]
+        for ti, t in enumerate(tasks):
+            nm = (t.get("업무명", f"Task {ti + 1}") or "")[:50]
+            route_opts.append({"text": {"type": "plain_text", "text": f"➕ 새[{ti + 1}] {nm}"},
+                               "value": f"new:{ti}"})
+        for at in active_tasks:
+            route_opts.append({"text": {"type": "plain_text", "text": f"📌 기존 {(at.get('name') or '')[:55]}"},
+                               "value": f"exist:{at.get('id')}"})
+        route_opts = route_opts[:100]
+        for j, todo in enumerate(loose_todos):
+            if len(blocks) >= 96:
+                break
+            blocks.append({"type": "section",
+                           "text": {"type": "mrkdwn", "text": f"• {str(todo)[:140]}"}})
+            blocks.append({
+                "type": "input", "block_id": f"todo_{j}", "optional": True,
+                "label": {"type": "plain_text", "text": "처리"},
+                "element": {
+                    "type": "static_select", "action_id": "todo_route",
+                    "options": route_opts,
+                    "initial_option": route_opts[0],
+                },
+            })
 
     metadata = json.dumps(
         {"session_id": session_id, "channel_id": channel_id},
