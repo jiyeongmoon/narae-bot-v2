@@ -283,6 +283,7 @@ def register_actions(app):
         ack()
         uid = body.get("user", {}).get("id", "")
         channel_id = body.get("channel", {}).get("id", "") or uid
+        notif_ts = body.get("message", {}).get("ts", "")  # 버튼 달린 원본 알림 메시지 ts
 
         _LOADING_VIEW = {
             "type": "modal",
@@ -382,6 +383,7 @@ def register_actions(app):
                 channel_id=channel_id,
                 loose_todos=session_data.get("loose_todos", []),
                 active_tasks=active_tasks_for_assign,
+                notif_ts=notif_ts,
             )
             client.views_update(view_id=view_id, view=modal)
         except Exception as e:

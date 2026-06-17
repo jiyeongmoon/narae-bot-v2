@@ -372,6 +372,7 @@ def register_modals(app):
 
         session_id = meta.get("session_id", "")
         channel_id = meta.get("channel_id", "") or user_id  # fallback to DM
+        notif_ts = meta.get("notif_ts", "")  # 버튼 달린 원본 알림 메시지 ts
 
         # ── 캐시에서 세션 데이터 조회 ────────────────────────────
         session_data = cache_get(f"mtg:{session_id}")
@@ -571,6 +572,13 @@ def register_modals(app):
             client.chat_postMessage(channel=target, text=full_text)
         except Exception:
             client.chat_postMessage(channel=user_id, text=full_text)
+
+        # ── 검토 끝난 원본 알림 메시지(버튼 포함) 삭제 ────────────
+        if notif_ts:
+            try:
+                client.chat_delete(channel=channel_id or user_id, ts=notif_ts)
+            except Exception as e:
+                logger.warning(f"원본 알림 메시지 삭제 실패: {e}")
 
         # ── 세션 캐시 삭제 ────────────────────────────────────────
         try:

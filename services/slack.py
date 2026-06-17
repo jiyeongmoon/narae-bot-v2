@@ -878,6 +878,7 @@ def build_meeting_review_modal(
     channel_id: str = "",
     loose_todos: list = None,
     active_tasks: list = None,
+    notif_ts: str = "",
 ) -> dict:
     """
     회의록 Task 검토 모달.
@@ -1095,7 +1096,7 @@ def build_meeting_review_modal(
             })
 
     metadata = json.dumps(
-        {"session_id": session_id, "channel_id": channel_id},
+        {"session_id": session_id, "channel_id": channel_id, "notif_ts": notif_ts},
         ensure_ascii=False,
     )
 
