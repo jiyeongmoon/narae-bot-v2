@@ -944,7 +944,8 @@ def replace_text_pattern_todos(task_id: str, all_todos: list, checked_ids: set, 
             tag = f" ({author_name})" if author_name else ""
             new_todo_blocks = []
             for t in text_pattern_todos:
-                is_checked = t["id"] in checked_ids
+                # 이번에 체크한 것 + 이미 체크돼 있던 것 모두 유지 (기존 체크가 풀리는 버그 방지)
+                is_checked = (t["id"] in checked_ids) or bool(t.get("checked"))
                 text = t["text"]
                 if is_checked and tag and tag not in text:
                     text += tag
