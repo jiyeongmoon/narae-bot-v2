@@ -9,6 +9,7 @@ handlers/modal.py — 일지 입력 모달 제출 처리 (멀티 Task + To-do �
 
 import datetime
 import json
+import re
 
 from services.notion import (
     save_log as append_daily_log,
@@ -32,6 +33,23 @@ from services.slack import (
     PRIORITY_DISPLAY_TO_CODE,
 )
 from services.cache import get as cache_get, delete as cache_delete
+
+
+def _filter_selected_todos(content_md: str, todo_block: dict) -> str:
+    """
+    모달의 To-do 체크박스(task_{i}_todos)에서 체크된 것만 남긴 내용 반환.
+    - 블록이 없으면(=To-do 없어 렌더 안 됨) 원본 그대로.
+    - 앞 10개만 체크 대상이므로 11번째 이후 To-do는 항상 유지.
+    - To-do가 아닌 줄(설명·빈 줄)은 그대로 보존.
+    """
+    sel = todo_block.get("todo_checks", {}).get("selected_options")
+    if sel is None:
+        return content_md
+    idxs = {int(o["value"]) for o in sel if str(o.get("value", "")).isdigit()}
+    lines = (content_md or "").splitlines()
+    todo_pos = [k for k, l in enumerate(lines) if re.match(r"^-\s*\[[ xX]?\]", l.strip())]
+    keep = {todo_pos[k] for k in idxs if 0 <= k < len(todo_pos)} | set(todo_pos[10:])
+    return "\n".join(l for k, l in enumerate(lines) if k not in todo_pos or k in keep).strip()
 
 
 def register_modals(app):
@@ -394,6 +412,7 @@ def register_modals(app):
         new_task_extra: dict = {}     # 새 Task 인덱스 → [todo, ...]
         existing_appends: list = []   # [(task_page_id, todo), ...]
         unassigned_todos: list = []   # 미배정 → Slack 알림
+        deleted_todos: list = []      # 삭제 → 아무 데도 안 감
         for j, todo in enumerate(loose_todos):
             opt = (values.get(f"todo_{j}", {}).get("todo_route", {})
                    .get("selected_option") or {})
@@ -405,6 +424,8 @@ def register_modals(app):
                     unassigned_todos.append(str(todo))
             elif val.startswith("exist:"):
                 existing_appends.append((val.split(":", 1)[1], str(todo)))
+            elif val == "delete":
+                deleted_todos.append(str(todo))       # 완전 제외 (알림에도 안 넣음)
             else:
                 unassigned_todos.append(str(todo))
 
@@ -478,8 +499,12 @@ def register_modals(app):
                       .get("selected_date", "")
             ) or ""
 
+            # 모달에서 체크된 To-do만 유지 (해제한 항목은 이 Task에서 제외)
+            _content = _filter_selected_todos(
+                task.get("내용", ""),
+                values.get(f"task_{i}_todos", {}),
+            )
             # 이 Task에 배정된 단독 To-do를 내용(체크리스트)에 합침
-            _content = task.get("내용", "")
             _extra = new_task_extra.pop(i, [])
             if _extra:
                 _content = (_content + "\n" + "\n".join(f"- [ ] {t}" for t in _extra)).strip()
@@ -553,6 +578,7 @@ def register_modals(app):
             f"✅ *회의 Task 등록 완료* — {len(created)}건 생성"
             + (f", {len(merged)}건 병합" if merged else "")
             + (f", To-do {todo_appended}건 추가" if todo_appended else "")
+            + (f", 🗑 {len(deleted_todos)}건 삭제" if deleted_todos else "")
             + (f", {len(failed)}건 실패" if failed else "")
         )
         full_text = summary + "\n" + "\n".join(lines) if lines else summary

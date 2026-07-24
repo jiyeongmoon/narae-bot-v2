@@ -944,6 +944,26 @@ def build_meeting_review_modal(
             "elements": [{"type": "mrkdwn", "text": f"💡 AI 제안: {hint_text}"}],
         })
 
+        # ── ✅ 이 Task의 To-do 확인·선택 (체크 해제 = 이 Task에서 제외) ──
+        _td_lines = [l.strip() for l in (task.get("내용", "") or "").splitlines()
+                     if re.match(r"^-\s*\[[ xX]?\]", l.strip())]
+        if _td_lines:
+            _td_opts = []
+            for _ti, _l in enumerate(_td_lines[:10]):        # Slack checkboxes 최대 10
+                _lab = re.sub(r"^-\s*\[[ xX]?\]\s*", "", _l).strip() or _l
+                _td_opts.append({"text": {"type": "plain_text", "text": _lab[:74]},
+                                 "value": str(_ti)})
+            blocks.append({
+                "type": "input", "block_id": f"task_{i}_todos", "optional": True,
+                "label": {"type": "plain_text", "text": "✅ To-do (유지할 항목)"},
+                "hint": {"type": "plain_text", "text": "체크 해제한 항목은 이 Task에 넣지 않습니다."},
+                "element": {"type": "checkboxes", "action_id": "todo_checks",
+                            "options": _td_opts, "initial_options": _td_opts},
+            })
+            if len(_td_lines) > 10:
+                blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
+                    "text": f"_To-do {len(_td_lines)}개 중 앞 10개만 선택 가능 — 나머지는 그대로 유지._"}]})
+
         # 담당자 선택 — 힌트 이름으로 initial_option 자동 매칭
         initial_assignee: dict | None = None
         if assignee_hint:
@@ -1071,7 +1091,10 @@ def build_meeting_review_modal(
         blocks.append({"type": "section", "text": {"type": "mrkdwn",
             "text": ("*✅ To-do (산출물 없는 항목)*\n"
                      "_각 항목을 어느 Task에 넣을지 선택하세요. 미배정은 알림으로만 전달됩니다._")}})
-        route_opts = [{"text": {"type": "plain_text", "text": "미배정 (알림만)"}, "value": "none"}]
+        route_opts = [
+            {"text": {"type": "plain_text", "text": "미배정 (알림만)"}, "value": "none"},
+            {"text": {"type": "plain_text", "text": "🗑 삭제 (완전 제외)"}, "value": "delete"},
+        ]
         for ti, t in enumerate(tasks):
             nm = (t.get("업무명", f"Task {ti + 1}") or "")[:50]
             route_opts.append({"text": {"type": "plain_text", "text": f"➕ 새[{ti + 1}] {nm}"},
