@@ -218,8 +218,18 @@ def build_task_select_modal(tasks: list[dict],
         })
 
     # ── 타인 업무 (담당자별 그룹화, 상위 5건) ──────────────────
+    # ★ 블록 상한 가드(2026-07-28): 담당자가 많으면 Slack 모달 100블록 한도를 초과해
+    #   views_open/update가 실패(버튼 ⚠️)하던 문제 → 한도 근처에서 멈추고 검색으로 유도.
+    _MODAL_BLOCK_CAP = 96   # 100 - 트레일링 안내/여유
     if other_groups:
+        _omitted_people = 0
         for person, person_tasks in other_groups.items():
+            opts = [_make_option(t) for t in person_tasks[:5]]
+            if not opts:
+                continue
+            if len(blocks) + 3 > _MODAL_BLOCK_CAP:   # 이 그룹(divider+section+input=3) 넣으면 초과
+                _omitted_people += 1
+                continue
             blocks.append({"type": "divider"})
             blocks.append({
                 "type": "section",
@@ -233,8 +243,14 @@ def build_task_select_modal(tasks: list[dict],
                 "element": {
                     "type": "checkboxes",
                     "action_id": "search_result_checkboxes", # 핸들러 호환성을 위해 동일 유지
-                    "options": [_make_option(t) for t in person_tasks[:5]],
+                    "options": opts,
                 }
+            })
+        if _omitted_people:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn",
+                              "text": f"_외 담당자 {_omitted_people}명 업무는 🔍 키워드 검색으로 확인하세요._"}],
             })
 
     if search_keyword and not (my_tasks or unassigned_tasks or other_groups):
@@ -244,6 +260,9 @@ def build_task_select_modal(tasks: list[dict],
         })
 
     # (새 Task 블록은 이미 위에서 검색 블록 바로 뒤에 추가됨)
+
+    # ★ 안전망: Slack 모달 블록 한도는 100. 어떤 경로로든 넘으면 잘라 실패를 방지.
+    blocks = blocks[:100]
 
     return {
         "type": "modal",
